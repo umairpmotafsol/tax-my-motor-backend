@@ -79,6 +79,22 @@ export interface VehicleTaxInfo {
 type CachedTax = Omit<VehicleTaxInfo, 'source' | 'stale'>;
 
 /**
+ * Bump this whenever `mapTaxResponse` or `mapVehicleResponse` changes
+ * what it reads out of a provider response.
+ *
+ * Cached rows store the mapped view, not just the raw one, so without
+ * a version a mapping fix reaches only the plates nobody has looked up
+ * yet. Raising it makes every older row rebuild itself from its stored
+ * response on next read — no second call to the provider, and no
+ * waiting for a day-long TTL to expire.
+ *
+ * 2: the VED table is chosen by the vehicle's age. Before this, tables
+ *    were read in a fixed order and a five-year-old car was priced at
+ *    its first-year rate.
+ */
+const MAPPING_VERSION = 2;
+
+/**
  * The identity half of a lookup.
  *
  * The Tax package carries only `Make`; model, colour, VIN and fuel type
@@ -269,7 +285,12 @@ export class VehiclesService {
    * their screen.
    */
   private async resolve(bare: string): Promise<ResolvedVehicle> {
-    const cached = await this.taxCacheModel.findOne({ reg: bare }).lean();
+    let cached = await this.taxCacheModel.findOne({ reg: bare }).lean();
+
+    if (cached && (cached.mappingVersion ?? 0) < MAPPING_VERSION && cached.raw) {
+      cached = await this.remap(bare, cached);
+    }
+
     const readCache = (stale: boolean): ResolvedVehicle => ({
       details: cached!.details as unknown as CachedTax,
       vehicle: (cached!.vehicle as unknown as CachedVehicle | null) ?? null,
@@ -299,6 +320,7 @@ export class VehiclesService {
             vehicle,
             source,
             fetchedAt: new Date(),
+            mappingVersion: MAPPING_VERSION,
           },
         },
         { upsert: true },
@@ -327,6 +349,59 @@ export class VehiclesService {
    */
   async vedFor(reg: string): Promise<VehicleTaxInfo> {
     return this.checkTax(reg);
+  }
+
+  /**
+   * Rebuild a cached row's mapped view from the response already stored
+   * against it.
+   *
+   * This is what `raw` is kept for. When the mapper changes, every row
+   * cached before it still serves the old reading — and the old reading
+   * here was a five-year-old car priced at its first-year rate, £1,410
+   * against a true £200. The alternatives were both bad: wait out the
+   * TTL and keep quoting the wrong figure for a day, or drop the rows
+   * and buy every plate a second time.
+   *
+   * `checkedAt` is carried over deliberately. The provider was called
+   * when it was called; re-reading its answer is not a fresh lookup,
+   * and saying otherwise would make a stale row look current.
+   */
+  private async remap(
+    bare: string,
+    cached: NonNullable<Awaited<ReturnType<VehiclesService['findCached']>>>,
+  ): Promise<typeof cached> {
+    const raw = cached.raw as Record<string, unknown>;
+    const previous = cached.details as unknown as Partial<CachedTax> | null;
+    const details: CachedTax = {
+      ...this.mapTaxResponse(bare, raw),
+      checkedAt: previous?.checkedAt ?? new Date(cached.fetchedAt).toISOString(),
+    };
+    const vehicle = this.mapVehicleResponse(
+      raw,
+      (cached.detailsRaw as Record<string, unknown> | null) ?? null,
+    );
+
+    await this.taxCacheModel.updateOne(
+      { reg: bare },
+      { $set: { details, vehicle, mappingVersion: MAPPING_VERSION } },
+    );
+    this.logger.log(
+      'Re-read the stored response for ' + bare + ' at mapping v' + MAPPING_VERSION + '.',
+    );
+
+    /* The lean row types these as loose records; they are read back
+     * through the same casts `readCache` uses. */
+    return {
+      ...cached,
+      details: details as unknown as typeof cached.details,
+      vehicle: vehicle as unknown as typeof cached.vehicle,
+      mappingVersion: MAPPING_VERSION,
+    };
+  }
+
+  /** Narrow helper, so `remap` can name the lean row's type. */
+  private findCached(reg: string) {
+    return this.taxCacheModel.findOne({ reg }).lean();
   }
 
   private toHttp(err: VehicleDataError): Error {
@@ -361,17 +436,46 @@ export class VehiclesService {
     const rates = asObject(duty.VedRate) ?? {};
 
     /*
-     * First year beats the premium supplement, which beats the standard
-     * rate: a car pays its first-year rate in its first year whatever
-     * it cost, and the £40k supplement only from the second. The
-     * provider nulls the tables that do not apply, so in practice one
-     * of these has figures and the rest do not.
+     * Which rate table this car actually pays from.
+     *
+     * The provider returns the whole post-2017 schedule at once, not
+     * the one line that applies: a 2021 car comes back with a
+     * first-year rate, a premium rate and a standard rate all
+     * populated, and only a pre-2017 car has the inapplicable ones
+     * nulled. So the table has to be chosen here, by the car's age,
+     * and reading them in a fixed order is how a five-year-old car
+     * gets quoted its first-year rate — £1,410 against a true £200.
+     *
+     * The first-year rate is paid once, on a car's first licence, so it
+     * is only considered for a car built this year. That is a year
+     * coarser than the real rule, which runs twelve months from first
+     * registration, and it is deliberately the cautious side of it:
+     * the provider sends no registration date, and of the two ways to
+     * be wrong, quoting the standard rate to a brand-new car loses a
+     * few pounds, while quoting the first-year rate to an old one
+     * overcharges by an order of magnitude.
+     *
+     * Standard is then preferred over premium because the £40,000
+     * supplement turns on list price, which is in no field here — the
+     * premium figures come back identical for every post-2017 car, so
+     * they are the generic supplement rather than a judgement about
+     * this one. Premium is kept last as a fallback so a car that
+     * somehow has only that table is still priced rather than refused.
      */
-    const bands: Array<[VedBand, unknown]> = [
-      ['first-year', rates.FirstYear],
-      ['premium', rates.PremiumVehicle],
-      ['standard', rates.Standard],
-    ];
+    const builtYear = asNumber(tax.YearOfManufacture);
+    const builtThisYear = builtYear !== null && builtYear >= new Date().getFullYear();
+
+    const bands: Array<[VedBand, unknown]> = builtThisYear
+      ? [
+          ['first-year', rates.FirstYear],
+          ['standard', rates.Standard],
+          ['premium', rates.PremiumVehicle],
+        ]
+      : [
+          ['standard', rates.Standard],
+          ['first-year', rates.FirstYear],
+          ['premium', rates.PremiumVehicle],
+        ];
     const applicable = bands
       .map(([band, table]) => ({ band, table: asObject(table) }))
       .find(entry => entry.table && (asNumber(entry.table.SixMonths) !== null || asNumber(entry.table.TwelveMonths) !== null));

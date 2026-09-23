@@ -48,6 +48,22 @@ export class VehicleTaxLookup {
   @Prop({ type: Object, default: null })
   vehicle!: Record<string, unknown> | null;
 
+  /**
+   * Which build of the mapper produced `details`.
+   *
+   * A mapping fix has to reach rows cached before it — the VED table a
+   * car is priced from was being read wrongly, and every row already
+   * stored carried that wrong figure until its TTL ran out. Stamping
+   * the version here lets a stale mapping be spotted on read and
+   * rebuilt from `raw`, so the fix lands on the next request instead of
+   * a day later, and without buying the plate again.
+   *
+   * Defaults to 0, which is older than any released mapper, so rows
+   * written before this field existed are re-mapped once.
+   */
+  @Prop({ type: Number, default: 0, index: true })
+  mappingVersion!: number;
+
   /** Where this row came from: a real call, or the documented sample in development. */
   @Prop({ required: true, enum: ['live', 'sample'], default: 'live' })
   source!: 'live' | 'sample';

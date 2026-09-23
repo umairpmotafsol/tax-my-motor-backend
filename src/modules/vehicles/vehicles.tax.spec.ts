@@ -366,3 +366,259 @@ describe('registration lookup', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Which VED table a vehicle is priced from.
+ *
+ * Written against a real response for AJ11 JJJ, a 2021 BMW. The
+ * provider returns the whole post-2017 schedule at once — a first-year
+ * rate of £1,410, a premium rate of £640 and a standard rate of £200,
+ * all populated on the same car — and leaves the choice to the caller.
+ * Reading them in a fixed order quoted that car £1,410 and, because
+ * DVLA sells no six-month first licence, made its six-month price null
+ * and failed the whole options screen with a 422.
+ *
+ * So these fix the rule that decides: a car is on its first licence
+ * only in the year it was built, and everything else pays standard.
+ */
+describe('choosing the VED rate table', () => {
+  type VedTable = { SixMonths: number | null; TwelveMonths: number | null } | null;
+  type VedTables = Record<'FirstYear' | 'PremiumVehicle' | 'Standard', VedTable>;
+
+  /** A response in the provider's own shape, with the tables it really sends. */
+  const payload = (year: number, rates: VedTables) => ({
+    Results: {
+      VehicleTaxDetails: {
+        Vrm: 'AJ11JJJ',
+        Make: 'BMW',
+        Co2Emissions: 154,
+        YearOfManufacture: year,
+        TaxStatus: 'Taxed',
+        TaxIsCurrentlyValid: true,
+        VehicleExciseDutyDetails: { DvlaCo2: 154, VedRate: rates },
+      },
+    },
+  });
+
+  /* Exactly what came back for AJ11 JJJ. */
+  const POST_2017: VedTables = {
+    FirstYear: { SixMonths: null, TwelveMonths: 1410 },
+    PremiumVehicle: { SixMonths: 352, TwelveMonths: 640 },
+    Standard: { SixMonths: 110, TwelveMonths: 200 },
+  };
+
+  const taxFor = async (year: number, rates: VedTables = POST_2017) => {
+    const client = new VehicleDataClient({} as never, configFor() as never);
+    jest.spyOn(client, 'fetchTax').mockResolvedValue({
+      payload: payload(year, rates) as never,
+      source: 'live',
+    });
+    const service = new VehiclesService(
+      {} as never,
+      cacheModel(null) as never,
+      client,
+      configFor() as never,
+    );
+    return service.checkTax('AJ11JJJ');
+  };
+
+  const thisYear = new Date().getFullYear();
+
+  it('prices a five-year-old car at the standard rate, not the first-year one', async () => {
+    const info = await taxFor(thisYear - 5);
+
+    expect(info.ved).toEqual({ sixMonth: 110, twelveMonth: 200, band: 'standard' });
+    // The bug this replaces: £1,410 for a car that owes £200.
+    expect(info.ved?.twelveMonth).not.toBe(1410);
+  });
+
+  /*
+   * The 422 was a symptom, not the disease. The first-year table has no
+   * six-month figure because DVLA does not sell half a first licence —
+   * so picking that table for an old car took the six-month term away
+   * from a car that is perfectly entitled to it.
+   */
+  it('restores the six-month term that the wrong table had removed', async () => {
+    const info = await taxFor(thisYear - 5);
+
+    expect(info.ved?.sixMonth).toBe(110);
+  });
+
+  it('still uses the first-year rate for a car built this year', async () => {
+    const info = await taxFor(thisYear);
+
+    expect(info.ved).toEqual({ sixMonth: null, twelveMonth: 1410, band: 'first-year' });
+  });
+
+  /*
+   * The £40,000 supplement turns on list price, and no field in this
+   * package carries it — the premium figures arrive identical for every
+   * post-2017 car. Charging it on a guess would add £440 to a car that
+   * may not owe it.
+   */
+  it('does not reach for the premium table on a car it cannot price that way', async () => {
+    const info = await taxFor(thisYear - 5);
+
+    expect(info.ved?.band).not.toBe('premium');
+  });
+
+  /* A pre-2017 car: the provider does null what genuinely cannot apply. */
+  it('reads the only table a pre-2017 car has', async () => {
+    const info = await taxFor(2014, {
+      FirstYear: { SixMonths: null, TwelveMonths: null },
+      PremiumVehicle: { SixMonths: null, TwelveMonths: null },
+      Standard: { SixMonths: 198, TwelveMonths: 360 },
+    });
+
+    expect(info.ved).toEqual({ sixMonth: 198, twelveMonth: 360, band: 'standard' });
+  });
+
+  /* Better a priced car than a refused one, if that is all there is. */
+  it('falls back to whichever table has figures at all', async () => {
+    const info = await taxFor(thisYear - 5, {
+      FirstYear: { SixMonths: null, TwelveMonths: null },
+      PremiumVehicle: { SixMonths: 352, TwelveMonths: 640 },
+      Standard: { SixMonths: null, TwelveMonths: null },
+    });
+
+    expect(info.ved).toEqual({ sixMonth: 352, twelveMonth: 640, band: 'premium' });
+  });
+
+  it('reports no rate rather than a made-up one when every table is empty', async () => {
+    const info = await taxFor(thisYear - 5, {
+      FirstYear: null,
+      PremiumVehicle: null,
+      Standard: null,
+    });
+
+    expect(info.ved).toBeNull();
+  });
+});
+
+/**
+ * A mapping fix reaching rows that were cached before it.
+ *
+ * The cache stores the mapped view, not only the provider's response,
+ * so correcting the mapper left every cached plate still serving the
+ * old reading — a five-year-old car priced at its first-year rate,
+ * £1,410 against a true £200, for as long as the day-long TTL had left
+ * to run. The raw response is kept for exactly this, and these hold it
+ * to that: the row rebuilds itself, and nothing is bought twice.
+ */
+describe('re-reading a row mapped by an older build', () => {
+  const RAW = {
+    Results: {
+      VehicleTaxDetails: {
+        Vrm: 'AJ11JJJ',
+        Make: 'BMW',
+        Co2Emissions: 154,
+        YearOfManufacture: 2021,
+        TaxStatus: 'Taxed',
+        TaxIsCurrentlyValid: true,
+        VehicleExciseDutyDetails: {
+          DvlaCo2: 154,
+          VedRate: {
+            FirstYear: { SixMonths: null, TwelveMonths: 1410 },
+            PremiumVehicle: { SixMonths: 352, TwelveMonths: 640 },
+            Standard: { SixMonths: 110, TwelveMonths: 200 },
+          },
+        },
+      },
+    },
+  };
+
+  /** The row as the old mapper left it: fresh, and wrong. */
+  const staleRow = (over: Record<string, unknown> = {}) => ({
+    reg: 'AJ11JJJ',
+    raw: RAW,
+    detailsRaw: null,
+    details: {
+      reg: 'AJ11 JJJ',
+      taxStatus: 'Taxed',
+      ved: { sixMonth: null, twelveMonth: 1410, band: 'first-year' },
+      checkedAt: '2026-09-23T09:58:39.682Z',
+    },
+    vehicle: null,
+    source: 'live',
+    fetchedAt: new Date(),
+    ...over,
+  });
+
+  const serviceOver = (row: unknown) => {
+    const cache = cacheModel(row);
+    const client = new VehicleDataClient({} as never, configFor() as never);
+    const fetchTax = jest.spyOn(client, 'fetchTax');
+    const service = new VehiclesService(
+      {} as never,
+      cache as never,
+      client,
+      configFor() as never,
+    );
+    return { service, cache, fetchTax };
+  };
+
+  it('serves the corrected rate instead of the one on the row', async () => {
+    const { service } = serviceOver(staleRow());
+
+    const info = await service.checkTax('AJ11JJJ');
+
+    expect(info.ved).toEqual({ sixMonth: 110, twelveMonth: 200, band: 'standard' });
+  });
+
+  /* The whole point of keeping `raw`: a mapping fix is not a new bill. */
+  it('does it without calling the provider again', async () => {
+    const { service, fetchTax } = serviceOver(staleRow());
+
+    await service.checkTax('AJ11JJJ');
+
+    expect(fetchTax).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('writes the corrected view back, so it is read once', async () => {
+    const { service, cache } = serviceOver(staleRow());
+
+    await service.checkTax('AJ11JJJ');
+
+    const written = cache.updateOne.mock.calls[0][1] as {
+      $set: { mappingVersion: number; details: { ved: unknown } };
+    };
+    expect(written.$set.mappingVersion).toBeGreaterThan(0);
+    expect(written.$set.details.ved).toEqual({
+      sixMonth: 110,
+      twelveMonth: 200,
+      band: 'standard',
+    });
+  });
+
+  /*
+   * Re-reading a stored answer is not a fresh lookup. Stamping it with
+   * now would make a day-old row look like it had just been checked.
+   */
+  it('keeps the time the provider was actually called', async () => {
+    const { service } = serviceOver(staleRow());
+
+    const info = await service.checkTax('AJ11JJJ');
+
+    expect(info.checkedAt).toBe('2026-09-23T09:58:39.682Z');
+  });
+
+  it('leaves a row already on the current mapping alone', async () => {
+    const { service, cache } = serviceOver(
+      staleRow({ mappingVersion: 99, details: { reg: 'AJ11 JJJ', taxStatus: 'Taxed' } }),
+    );
+
+    await service.checkTax('AJ11JJJ');
+
+    expect(cache.updateOne).not.toHaveBeenCalled();
+  });
+
+  /* Nothing to re-read from: it has to be fetched like any expired row. */
+  it('does not try to rebuild a row with no stored response', async () => {
+    const { service, cache } = serviceOver(staleRow({ raw: null }));
+
+    await service.checkTax('AJ11JJJ');
+
+    expect(cache.updateOne).not.toHaveBeenCalled();
+  });
+});

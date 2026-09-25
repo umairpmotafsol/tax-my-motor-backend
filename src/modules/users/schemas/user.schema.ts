@@ -66,6 +66,16 @@ export class User {
   @Prop({ type: Boolean, default: true })
   active!: boolean;
 
+  /**
+   * True while the account is still on a password somebody else chose.
+   * Supplier sign-ins are opened by an admin, who generates the first
+   * password and sends it over — so until the holder replaces it, the
+   * admin knows it too. The supplier app asks for a replacement on the
+   * next sign-in; `changePassword` clears this.
+   */
+  @Prop({ type: Boolean, default: false })
+  mustChangePassword!: boolean;
+
   @Prop({ type: Date, default: null })
   lastLoginAt!: Date | null;
 }

@@ -18,6 +18,8 @@ export interface PublicUser {
   postcode: string;
   referralCode: string | null;
   freeOrders: number;
+  /** Still on an admin-issued password — the app asks them to replace it. */
+  mustChangePassword: boolean;
   createdAt: string | null;
 }
 
@@ -34,6 +36,7 @@ export function toPublicUser(user: UserDocument): PublicUser {
     postcode: user.postcode,
     referralCode: user.referralCode ?? null,
     freeOrders: user.freeOrders,
+    mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: toIso((user as unknown as { createdAt?: Date }).createdAt),
   };
 }

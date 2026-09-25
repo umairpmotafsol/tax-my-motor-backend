@@ -155,6 +155,8 @@ export class SuppliersController {
       password,
       role: Role.Supplier,
       supplier: supplier._id,
+      /* Generated here and sent over, so the holder is asked to replace it. */
+      mustChangePassword: true,
     });
     return { login: toSupplierLogin(user), password };
   }

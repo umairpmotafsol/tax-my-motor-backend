@@ -4,13 +4,27 @@
  * unchanged submission. Email is also the login identifier and carries
  * a unique index — these cover the three ways that combination can go
  * wrong.
+ *
+ * The password cases below cover the other half of an account somebody
+ * else opened: who is known to hold the password, and when that stops
+ * being true.
  */
 import { ConflictException } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 
 import { UsersService } from './users.service';
 
-const serviceWith = (model: Record<string, unknown>) =>
-  new UsersService(model as never, {} as never, { get: () => undefined } as never);
+const serviceWith = (model: Record<string, unknown>, rounds?: number) =>
+  new UsersService(model as never, {} as never, { get: () => rounds } as never);
+
+/** A stored user, as `findByIdWithPassword` hands one back. */
+const storedUser = (passwordHash: string, mustChangePassword: boolean) => {
+  const user = { passwordHash, mustChangePassword, save: jest.fn(async () => undefined) };
+  return {
+    user,
+    model: { findById: () => ({ select: async () => user }) },
+  };
+};
 
 describe('updateProfile', () => {
   it('saves a changed email once it has checked nobody else holds it', async () => {
@@ -64,5 +78,36 @@ describe('updateProfile', () => {
 
     expect(model.exists).not.toHaveBeenCalled();
     expect(model.findByIdAndUpdate.mock.calls[0][1]).toEqual({ name: 'Jo' });
+  });
+});
+
+describe('who knows the password', () => {
+  /* Cheap rounds: these assert the flag, not the hashing. */
+  const ROUNDS = 4;
+
+  it('stops asking once the holder has chosen their own', async () => {
+    const { user, model } = storedUser(await bcrypt.hash('issued-by-admin', ROUNDS), true);
+
+    await serviceWith(model, ROUNDS).changePassword('u1', 'issued-by-admin', 'mine-alone');
+
+    expect(user.mustChangePassword).toBe(false);
+    expect(await bcrypt.compare('mine-alone', user.passwordHash)).toBe(true);
+  });
+
+  it('refuses a change that cannot produce the current password', async () => {
+    const { user, model } = storedUser(await bcrypt.hash('issued-by-admin', ROUNDS), true);
+
+    await expect(
+      serviceWith(model, ROUNDS).changePassword('u1', 'not-it', 'mine-alone'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it('marks a password an admin set, because the admin now knows it', async () => {
+    const { user, model } = storedUser('whatever', false);
+
+    await serviceWith(model, ROUNDS).setPassword('u1', 'generated-for-them');
+
+    expect(user.mustChangePassword).toBe(true);
   });
 });

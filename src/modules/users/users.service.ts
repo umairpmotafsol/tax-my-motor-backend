@@ -32,6 +32,8 @@ export interface CreateUserInput {
   postcode?: string;
   supplier?: Types.ObjectId | string | null;
   referredByCode?: string;
+  /** Set when the password is one an admin generated rather than one the holder chose. */
+  mustChangePassword?: boolean;
 }
 
 @Injectable()
@@ -66,6 +68,7 @@ export class UsersService {
       supplier: input.supplier ? new Types.ObjectId(input.supplier) : null,
       referralCode: input.role === Role.Customer ? await this.mintReferralCode(input.name) : undefined,
       referredBy: referrer?._id ?? null,
+      mustChangePassword: input.mustChangePassword ?? false,
     });
 
     return user;
@@ -254,6 +257,8 @@ export class UsersService {
       throw new ConflictException('Your current password is not correct.');
     }
     user.passwordHash = await this.hashPassword(next);
+    /* Chosen by the holder, so nobody else is holding a copy of it. */
+    user.mustChangePassword = false;
     await user.save();
   }
 
@@ -262,10 +267,19 @@ export class UsersService {
    * supplier's sign-in, who by definition cannot supply it. Kept apart
    * from `changePassword` so the path that skips the current-password
    * check is one an admin-only controller has to ask for by name.
+   *
+   * A password set this way is known to whoever set it, so it is marked
+   * for replacement by default; pass `false` only where that is not
+   * true.
    */
-  async setPassword(id: string | Types.ObjectId, next: string): Promise<UserDocument> {
+  async setPassword(
+    id: string | Types.ObjectId,
+    next: string,
+    mustChangePassword = true,
+  ): Promise<UserDocument> {
     const user = await this.findByIdWithPassword(id);
     user.passwordHash = await this.hashPassword(next);
+    user.mustChangePassword = mustChangePassword;
     await user.save();
     return user;
   }

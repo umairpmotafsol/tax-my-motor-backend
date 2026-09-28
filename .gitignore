@@ -7,3 +7,5 @@ coverage/
 uploads/*
 !uploads/.gitkeep
 .DS_Store
+firebaseintegeration.json
+*-firebase-adminsdk-*.json

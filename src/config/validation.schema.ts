@@ -55,6 +55,8 @@ export const validationSchema = Joi.object({
   VEHICLE_DATA_PACKAGE: Joi.string().default('Tax'),
   /** Empty means the identity fields stay blank rather than being guessed. */
   VEHICLE_DATA_DETAILS_PACKAGE: Joi.string().allow('').default(''),
+  /** Empty means cars the provider cannot price are quoted without the list-price check. */
+  VEHICLE_DATA_VALUATION_PACKAGE: Joi.string().allow('').default(''),
 
   // Vehicle Data Global bills per successful lookup, so live calls are
   // off until someone turns them on, and cannot be turned on without a

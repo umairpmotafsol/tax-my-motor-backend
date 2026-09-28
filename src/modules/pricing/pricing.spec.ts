@@ -6,7 +6,7 @@
  */
 import { UnprocessableEntityException } from '@nestjs/common';
 
-import { PricingService } from './pricing.service';
+import { PricingService, vedRatesOf } from './pricing.service';
 
 /** The sample vehicle: £395 a year, £217.25 for six months. */
 const VW = { sixMonth: 217.25, twelveMonth: 395 };
@@ -158,5 +158,34 @@ describe('listing terms a vehicle cannot have', () => {
     expect(() => service().price('6m', false, FIRST_LICENCE)).toThrow(
       UnprocessableEntityException,
     );
+  });
+});
+
+/**
+ * A vehicle priced from DVLA's own tables carries the leaflet's Direct
+ * Debit figure, including the leaflet's "–" where DVLA sells none.
+ */
+describe('Direct Debit from DVLA tables', () => {
+  it('uses the leaflet figure when one is given', () => {
+    const car = { sixMonth: 352, twelveMonth: 640, directDebit: 672 };
+
+    expect(service().price('dd', false, car).tax).toBe(672);
+  });
+
+  it('marks Direct Debit unavailable where the leaflet has none, and keeps the rest', () => {
+    const hgv = { sixMonth: 97.1, twelveMonth: 162, directDebit: null };
+    const options = service().listOptions(hgv);
+
+    expect(options.map(o => [o.id, o.available, o.tax])).toEqual([
+      ['6m', true, 97.1],
+      ['12m', true, 162],
+      ['dd', false, null],
+    ]);
+    expect(options[2].unavailableReason).toBe('DVLA does not offer this term for this vehicle.');
+  });
+
+  it('still works the surcharge out for the provider’s rates, which carry no figure', () => {
+    expect(vedRatesOf({ sixMonth: 217.25, twelveMonth: 395 })).not.toHaveProperty('directDebit');
+    expect(service().price('dd', false, vedRatesOf(VW)).tax).toBe(414.75);
   });
 });

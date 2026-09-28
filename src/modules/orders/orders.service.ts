@@ -34,7 +34,7 @@ import {
 } from '../../common/utils/format.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentsService } from '../payments/payments.service';
-import { PricingService } from '../pricing/pricing.service';
+import { PricingService, vedRatesOf } from '../pricing/pricing.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { UsersService } from '../users/users.service';
@@ -103,10 +103,7 @@ export class OrdersService {
      * is the one the server stands behind.
      */
     const taxInfo = await this.vehicles.vedFor(dto.reg);
-    const pricing = this.pricing.price(dto.option, withV62, {
-      sixMonth: taxInfo.ved?.sixMonth ?? null,
-      twelveMonth: taxInfo.ved?.twelveMonth ?? null,
-    });
+    const pricing = this.pricing.price(dto.option, withV62, vedRatesOf(taxInfo.ved));
 
     /*
      * The mandate is validated here, not only in the app. A sort code

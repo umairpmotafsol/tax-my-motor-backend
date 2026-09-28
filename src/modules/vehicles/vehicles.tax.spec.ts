@@ -7,6 +7,11 @@
  */
 import { VehicleDataClient, VehicleDataError } from './vehicle-data.client';
 import { VEHICLE_TAX_SAMPLE } from './fixtures/vehicle-tax.sample';
+import {
+  RE23YRU_DETAILS,
+  RE23YRU_VALUATION,
+  YD23OGM_DETAILS,
+} from './fixtures/vehicle-details.samples';
 import { VehiclesService } from './vehicles.service';
 
 const settings = {
@@ -14,6 +19,7 @@ const settings = {
   baseUrl: 'https://uk.api.vehicledataglobal.com',
   packageName: 'Tax',
   detailsPackage: '',
+  valuationPackage: '',
   live: false,
   cacheTtlMs: 86_400_000,
   dailyCallLimit: 200,
@@ -32,6 +38,19 @@ const cacheModel = (row: unknown) => ({
 });
 
 const fetchSpy = jest.spyOn(global, 'fetch' as never);
+
+/** The documented sample with every rate table empty — a vehicle the Tax package cannot price. */
+const UNPRICED_SAMPLE = (() => {
+  const sample = structuredClone(VEHICLE_TAX_SAMPLE) as unknown as {
+    Results: { VehicleTaxDetails: { VehicleExciseDutyDetails: { VedRate: unknown } } };
+  };
+  sample.Results.VehicleTaxDetails.VehicleExciseDutyDetails.VedRate = {
+    FirstYear: { SixMonths: null, TwelveMonths: null },
+    PremiumVehicle: { SixMonths: null, TwelveMonths: null },
+    Standard: { SixMonths: null, TwelveMonths: null },
+  };
+  return sample as unknown as Record<string, unknown>;
+})();
 
 beforeEach(() => {
   fetchSpy.mockReset();
@@ -294,9 +313,10 @@ describe('registration lookup', () => {
     expect(tax.source).toBe('sample');
   });
 
-  it('fills model, colour and fuel from the identity package when one is configured', async () => {
+  it('fills model, colour and fuel from the identity package when Tax could not price it', async () => {
     const cache = cacheModel(null);
     const client = new VehicleDataClient({} as never, configFor() as never);
+    jest.spyOn(client, 'fetchTax').mockResolvedValue({ payload: UNPRICED_SAMPLE, source: 'sample' });
     jest.spyOn(client, 'fetchDetails').mockResolvedValue({
       source: 'live',
       payload: {
@@ -333,6 +353,7 @@ describe('registration lookup', () => {
   it('never writes a licence-restricted marker into the VIN the V62 uses', async () => {
     const cache = cacheModel(null);
     const client = new VehicleDataClient({} as never, configFor() as never);
+    jest.spyOn(client, 'fetchTax').mockResolvedValue({ payload: UNPRICED_SAMPLE, source: 'sample' });
     jest.spyOn(client, 'fetchDetails').mockResolvedValue({
       source: 'live',
       payload: {
@@ -620,5 +641,250 @@ describe('re-reading a row mapped by an older build', () => {
     await service.checkTax('AJ11JJJ');
 
     expect(cache.updateOne).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The provider's rate when it has one, DVLA's tables when it does not.
+ *
+ * Built against the two plates that prompted it: a 2023 Land Rover and
+ * a 2023 Toyota that came back from the provider with every VedRate
+ * table empty, and so could not be sold at all. Everything is mocked
+ * at the client — no test here reaches the paid endpoint.
+ */
+describe('pricing from DVLA tables when the provider has no rate', () => {
+  const EMPTY_RATES = {
+    FirstYear: { SixMonths: null, TwelveMonths: null },
+    PremiumVehicle: { SixMonths: null, TwelveMonths: null },
+    Standard: { SixMonths: null, TwelveMonths: null },
+  };
+  const unpricedTax = (make: string) => ({
+    Results: {
+      VehicleTaxDetails: {
+        Make: make,
+        YearOfManufacture: 2023,
+        TaxStatus: 'Taxed',
+        TaxIsCurrentlyValid: true,
+        TaxDueDate: '2027-06-01T00:00:00',
+        VehicleExciseDutyDetails: { VedRate: EMPTY_RATES },
+        StatusCode: 0,
+      },
+    },
+  });
+  const emptyRegister = { findOne: async () => null };
+
+  // The supplement runs for a fixed five years; price as of the day the
+  // plates were looked up, so these do not expire in 2029.
+  beforeAll(() =>
+    jest.useFakeTimers({
+      now: new Date('2026-09-28T12:00:00Z'),
+      doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout', 'setInterval'],
+    }),
+  );
+  afterAll(() => jest.useRealTimers());
+
+  const setup = (opts: {
+    tax: Record<string, unknown> | VehicleDataError;
+    details: Record<string, unknown> | null;
+    valuation?: Record<string, unknown> | null;
+    row?: unknown;
+  }) => {
+    const cache = cacheModel(opts.row ?? null);
+    const client = new VehicleDataClient({} as never, configFor() as never);
+    const fetchTax = jest.spyOn(client, 'fetchTax');
+    if (opts.tax instanceof VehicleDataError) {
+      fetchTax.mockRejectedValue(opts.tax);
+    } else {
+      fetchTax.mockResolvedValue({ payload: opts.tax, source: 'live' });
+    }
+    const fetchDetails = jest
+      .spyOn(client, 'fetchDetails')
+      .mockResolvedValue(opts.details ? { payload: opts.details, source: 'live' } : null);
+    const fetchValuation = jest
+      .spyOn(client, 'fetchValuation')
+      .mockResolvedValue(opts.valuation ? { payload: opts.valuation, source: 'live' } : null);
+    const service = new VehiclesService(
+      emptyRegister as never,
+      cache as never,
+      client,
+      configFor() as never,
+    );
+    return { service, cache, fetchTax, fetchDetails, fetchValuation };
+  };
+
+  /*
+   * What a plate costs. Tax is always paid; each further call only when
+   * the one before it could not settle the price.
+   */
+  describe('the number of paid calls', () => {
+    it('is one for a vehicle the Tax package prices', async () => {
+      const { service, fetchTax, fetchDetails, fetchValuation } = setup({
+        tax: VEHICLE_TAX_SAMPLE as never,
+        details: YD23OGM_DETAILS as never,
+      });
+
+      await service.checkTax('AP52HOW');
+
+      expect(fetchTax).toHaveBeenCalledTimes(1);
+      expect(fetchDetails).not.toHaveBeenCalled();
+      expect(fetchValuation).not.toHaveBeenCalled();
+    });
+
+    it('is two for an unpriced vehicle whose list price cannot matter', async () => {
+      // A 2016 car: CO2 band pricing, no supplement to decide.
+      const older = structuredClone(YD23OGM_DETAILS) as unknown as {
+        Results: { VehicleDetails: { VehicleIdentification: Record<string, unknown> } };
+      };
+      older.Results.VehicleDetails.VehicleIdentification.DateFirstRegistered =
+        '2016-03-01T00:00:00Z';
+      const { service, fetchDetails, fetchValuation } = setup({
+        tax: unpricedTax('TOYOTA'),
+        details: older as never,
+      });
+
+      const info = await service.checkTax('YD23OGM');
+
+      expect(fetchDetails).toHaveBeenCalledTimes(1);
+      expect(fetchValuation).not.toHaveBeenCalled();
+      expect(info.ved?.twelveMonth).toBe(20);
+    });
+
+    it('is three for an unpriced car inside its supplement years', async () => {
+      const { service, fetchTax, fetchDetails, fetchValuation } = setup({
+        tax: unpricedTax('LAND ROVER'),
+        details: RE23YRU_DETAILS as never,
+        valuation: RE23YRU_VALUATION as never,
+      });
+
+      await service.checkTax('RE23YRU');
+
+      expect(fetchTax).toHaveBeenCalledTimes(1);
+      expect(fetchDetails).toHaveBeenCalledTimes(1);
+      expect(fetchValuation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('prices the Land Rover at £640 once its list price shows it cost over £40,000', async () => {
+    const { service, cache, fetchValuation } = setup({
+      tax: unpricedTax('LAND ROVER'),
+      details: RE23YRU_DETAILS as never,
+      valuation: RE23YRU_VALUATION as never,
+    });
+
+    const info = await service.checkTax('RE23YRU');
+
+    expect(info.ved).toMatchObject({
+      twelveMonth: 640,
+      sixMonth: 352,
+      directDebit: 672,
+      band: 'dvla-table',
+    });
+    expect(info.ved?.basis).toContain('V149');
+    expect(fetchValuation).toHaveBeenCalledTimes(1);
+    // Kept, so it is never bought twice.
+    const stored = cache.updateOne.mock.calls[0][1] as unknown as {
+      $set: { valuationRaw: unknown };
+    };
+    expect(stored.$set.valuationRaw).toEqual(RE23YRU_VALUATION);
+  });
+
+  it('prices the Corolla at the standard £200 when no valuation is available', async () => {
+    const { service } = setup({ tax: unpricedTax('TOYOTA'), details: YD23OGM_DETAILS as never });
+
+    const info = await service.checkTax('YD23OGM');
+
+    expect(info.ved).toMatchObject({
+      twelveMonth: 200,
+      sixMonth: 110,
+      directDebit: 210,
+      band: 'dvla-table',
+    });
+    expect(info.co2Emissions).toBe(101);
+  });
+
+  it('leaves the provider’s own rate alone, and buys no valuation for it', async () => {
+    const { service, fetchValuation } = setup({
+      tax: VEHICLE_TAX_SAMPLE as never,
+      details: YD23OGM_DETAILS as never,
+    });
+
+    const info = await service.checkTax('AP52HOW');
+
+    expect(info.ved).toEqual({ sixMonth: 217.25, twelveMonth: 395, band: 'standard' });
+    expect(fetchValuation).not.toHaveBeenCalled();
+  });
+
+  it('changes nothing without the identity package — the vehicle stays unpriced', async () => {
+    const { service, fetchValuation } = setup({ tax: unpricedTax('TOYOTA'), details: null });
+
+    const info = await service.checkTax('YD23OGM');
+
+    expect(info.ved).toBeNull();
+    expect(fetchValuation).not.toHaveBeenCalled();
+  });
+
+  it('still prices a vehicle the Tax package has no record of, if the register knows it', async () => {
+    const { service } = setup({
+      tax: new VehicleDataError('not-found', 'No record'),
+      details: YD23OGM_DETAILS as never,
+    });
+
+    const info = await service.checkTax('YD23OGM');
+
+    expect(info.make).toBe('TOYOTA');
+    expect(info.taxStatus).toBeNull();
+    expect(info.ved?.twelveMonth).toBe(200);
+  });
+
+  it('still refuses a plate neither package knows', async () => {
+    const { service } = setup({
+      tax: new VehicleDataError('not-found', 'No record'),
+      details: null,
+    });
+
+    await expect(service.checkTax('XX99XXX')).rejects.toThrow(
+      'We could not find a tax record for that registration.',
+    );
+  });
+
+  it('reads model, colour and fuel from where VehicleDetails nests them', async () => {
+    const { service } = setup({
+      tax: unpricedTax('LAND ROVER'),
+      details: RE23YRU_DETAILS as never,
+    });
+
+    const vehicle = await service.lookup('RE23YRU');
+
+    expect(vehicle).toMatchObject({
+      make: 'LAND ROVER',
+      variant: 'DISCOVERY SPORT RDYN SE MHEV A',
+      colour: 'BLACK',
+      taxClass: 'PETROL',
+      known: true,
+    });
+  });
+
+  it('re-prices a row cached before this, from what it stored, without buying anything', async () => {
+    const { service, fetchTax, fetchValuation } = setup({
+      tax: unpricedTax('LAND ROVER'),
+      details: null,
+      row: {
+        reg: 'RE23YRU',
+        raw: unpricedTax('LAND ROVER'),
+        detailsRaw: RE23YRU_DETAILS,
+        valuationRaw: RE23YRU_VALUATION,
+        details: { reg: 'RE23 YRU', ved: null, checkedAt: '2026-09-28T10:00:00.000Z' },
+        vehicle: null,
+        source: 'live',
+        mappingVersion: 2,
+        fetchedAt: new Date(),
+      },
+    });
+
+    const info = await service.checkTax('RE23YRU');
+
+    expect(info.ved?.twelveMonth).toBe(640);
+    expect(fetchTax).not.toHaveBeenCalled();
+    expect(fetchValuation).not.toHaveBeenCalled();
   });
 });

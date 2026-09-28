@@ -48,13 +48,20 @@ export interface AppConfig {
     /** The package configured on the account. "Tax" returns VehicleTaxDetails. */
     packageName: string;
     /**
-     * Optional second package carrying the identity fields the Tax
-     * package does not return — model, colour, VIN, fuel type. Empty
-     * means off, and a lookup then reports only what Tax can tell it
-     * rather than inventing the rest. Each package is billed, so
-     * switching this on doubles the cost of a plate.
+     * Optional second package — "VehicleDetails" — carrying what DVLA's
+     * rate tables need (vehicle type, registration date, engine size,
+     * weight, seats) and the identity fields besides. Called only for a
+     * plate the Tax package could not price, so a priced plate is still
+     * one billed call. Empty means off: such a vehicle stays unpriced.
      */
     detailsPackage: string;
+    /**
+     * Optional package for a car's list price when new — "ValuationDetails".
+     * Called only when the provider gives no tax rate and the price could
+     * decide the expensive car supplement; empty means off, and such a car
+     * is quoted the standard rate.
+     */
+    valuationPackage: string;
     /** Off unless explicitly enabled — with it off nothing is ever charged. */
     live: boolean;
     /** How long a paid answer is served from the cache before another call is worth making. */
@@ -114,6 +121,7 @@ export default (): AppConfig => ({
     baseUrl: process.env.VEHICLE_DATA_BASE_URL ?? 'https://uk.api.vehicledataglobal.com',
     packageName: process.env.VEHICLE_DATA_PACKAGE ?? 'Tax',
     detailsPackage: process.env.VEHICLE_DATA_DETAILS_PACKAGE ?? '',
+    valuationPackage: process.env.VEHICLE_DATA_VALUATION_PACKAGE ?? '',
     live: process.env.VEHICLE_DATA_LIVE === 'true',
     cacheTtlMs: parseInt(process.env.VEHICLE_DATA_CACHE_TTL_MS ?? '86400000', 10),
     dailyCallLimit: parseInt(process.env.VEHICLE_DATA_DAILY_LIMIT ?? '200', 10),

@@ -16,7 +16,8 @@ import {
   VehicleTaxLookup,
   VehicleTaxLookupDocument,
 } from './schemas/vehicle-tax-lookup.schema';
-import { VehicleDataClient, VehicleDataError } from './vehicle-data.client';
+import { VehicleDataClient, VehicleDataError, VehicleDataResult } from './vehicle-data.client';
+import { calculateVed, needsListPrice, readVehicleFacts } from './ved-calculator';
 
 export interface VehicleLookup {
   reg: string;
@@ -32,8 +33,11 @@ export interface VehicleLookup {
   known: boolean;
 }
 
-/** Which of the provider's rate tables a quote was taken from. */
-export type VedBand = 'first-year' | 'premium' | 'standard';
+/**
+ * Which rate table a quote was taken from: one of the provider's three,
+ * or — when the provider had none — DVLA's own leaflets (`ved-rates.ts`).
+ */
+export type VedBand = 'first-year' | 'premium' | 'standard' | 'dvla-table';
 
 /**
  * The tax picture the apps are allowed to see.
@@ -65,8 +69,17 @@ export interface VehicleTaxInfo {
    * quote can be explained: a car in its first year and a car over
    * £40,000 both pay more than the standard rate, and the provider
    * returns those as separate tables with the inapplicable ones null.
+   *
+   * A `dvla-table` quote also carries the leaflet's Direct Debit figure
+   * (null where DVLA sells none) and the row it came from, in `basis`.
    */
-  ved: { sixMonth: number | null; twelveMonth: number | null; band: VedBand } | null;
+  ved: {
+    sixMonth: number | null;
+    twelveMonth: number | null;
+    band: VedBand;
+    directDebit?: number | null;
+    basis?: string;
+  } | null;
   /** When the provider was actually called, not when this request was served. */
   checkedAt: string;
   /** Where the answer came from, so the apps can say "as of ..." honestly. */
@@ -91,8 +104,11 @@ type CachedTax = Omit<VehicleTaxInfo, 'source' | 'stale'>;
  * 2: the VED table is chosen by the vehicle's age. Before this, tables
  *    were read in a fixed order and a five-year-old car was priced at
  *    its first-year rate.
+ * 3: a vehicle the provider gives no rate for is priced from DVLA's
+ *    tables, and the identity fields are read from where the
+ *    VehicleDetails package actually nests them.
  */
-const MAPPING_VERSION = 2;
+const MAPPING_VERSION = 3;
 
 /**
  * The identity half of a lookup.
@@ -303,11 +319,22 @@ export class VehiclesService {
     }
 
     try {
-      const { payload, source } = await this.vehicleData.fetchTax(bare);
-      // Only worth a second billed call once the first has succeeded.
-      const identity = await this.vehicleData.fetchDetails(bare);
-      const details = this.mapTaxResponse(bare, payload);
-      const vehicle = this.mapVehicleResponse(payload, identity?.payload ?? null);
+      const { tax, identity } = await this.fetchTaxAndIdentity(bare);
+      const payload = tax?.payload ?? {};
+      const identityPayload = identity?.payload ?? null;
+      const source = tax?.source ?? identity!.source;
+
+      // At most three calls: Tax always; the identity package only when Tax
+      // gave no rate; the list price, the dearest, only for a car whose
+      // price could change the tax on it.
+      let valuationPayload: Record<string, unknown> | null = null;
+      const mapped = this.mapTaxResponse(bare, payload);
+      if (!mapped.ved && needsListPrice(readVehicleFacts(payload, identityPayload))) {
+        valuationPayload = (await this.vehicleData.fetchValuation(bare))?.payload ?? null;
+      }
+
+      const vehicle = this.mapVehicleResponse(payload, identityPayload);
+      const details = this.withTableRates(bare, mapped, vehicle, payload, identityPayload, valuationPayload);
 
       await this.taxCacheModel.updateOne(
         { reg: bare },
@@ -315,7 +342,8 @@ export class VehiclesService {
           $set: {
             reg: bare,
             raw: payload,
-            detailsRaw: identity?.payload ?? null,
+            detailsRaw: identityPayload,
+            valuationRaw: valuationPayload,
             details,
             vehicle,
             source,
@@ -371,15 +399,21 @@ export class VehiclesService {
     cached: NonNullable<Awaited<ReturnType<VehiclesService['findCached']>>>,
   ): Promise<typeof cached> {
     const raw = cached.raw as Record<string, unknown>;
+    const detailsRaw = (cached.detailsRaw as Record<string, unknown> | null) ?? null;
+    const valuationRaw = (cached.valuationRaw as Record<string, unknown> | null) ?? null;
     const previous = cached.details as unknown as Partial<CachedTax> | null;
+    const vehicle = this.mapVehicleResponse(raw, detailsRaw);
     const details: CachedTax = {
-      ...this.mapTaxResponse(bare, raw),
+      ...this.withTableRates(
+        bare,
+        this.mapTaxResponse(bare, raw),
+        vehicle,
+        raw,
+        detailsRaw,
+        valuationRaw,
+      ),
       checkedAt: previous?.checkedAt ?? new Date(cached.fetchedAt).toISOString(),
     };
-    const vehicle = this.mapVehicleResponse(
-      raw,
-      (cached.detailsRaw as Record<string, unknown> | null) ?? null,
-    );
 
     await this.taxCacheModel.updateOne(
       { reg: bare },
@@ -402,6 +436,90 @@ export class VehiclesService {
   /** Narrow helper, so `remap` can name the lean row's type. */
   private findCached(reg: string) {
     return this.taxCacheModel.findOne({ reg }).lean();
+  }
+
+  /**
+   * The Tax package, then — only if it could not price the vehicle — the
+   * identity package.
+   *
+   * Every plate costs the Tax call. The identity call is a second bill,
+   * and it is only needed to price from DVLA's tables, so a vehicle the
+   * Tax package already priced is not described any further: one call,
+   * as before the tables existed, with model and colour left blank.
+   *
+   * When Tax has no record at all, the identity package, which reads the
+   * DVLA register itself, is still asked: a vehicle it knows can be
+   * priced from the tables. A plate neither knows costs nothing, since a
+   * "no record" answer is not billed, and fails as it always did.
+   */
+  private async fetchTaxAndIdentity(
+    bare: string,
+  ): Promise<{ tax: VehicleDataResult | null; identity: VehicleDataResult | null }> {
+    let tax: VehicleDataResult | null = null;
+    let notFound: VehicleDataError | null = null;
+    try {
+      tax = await this.vehicleData.fetchTax(bare);
+    } catch (err) {
+      if (!(err instanceof VehicleDataError) || err.reason !== 'not-found') {
+        throw err;
+      }
+      notFound = err;
+    }
+    if (tax && this.mapTaxResponse(bare, tax.payload).ved) {
+      return { tax, identity: null };
+    }
+    const identity = await this.vehicleData.fetchDetails(bare);
+    if (!tax && !identity) {
+      throw notFound!;
+    }
+    return { tax, identity };
+  }
+
+  /**
+   * The provider's rate when it has one; DVLA's own tables when it does
+   * not.
+   *
+   * The tables need to know what the vehicle is, so without the identity
+   * package this changes nothing and the vehicle stays unpriced, exactly
+   * as before. The make, year and CO2 the tax screen shows are filled
+   * from the identity package too when the Tax package had none of them.
+   */
+  private withTableRates(
+    bare: string,
+    details: CachedTax,
+    vehicle: CachedVehicle,
+    tax: Record<string, unknown>,
+    identity: Record<string, unknown> | null,
+    valuation: Record<string, unknown> | null,
+  ): CachedTax {
+    if (details.ved) {
+      return details;
+    }
+    const facts = readVehicleFacts(tax, identity, valuation);
+    const filled: CachedTax = {
+      ...details,
+      make: details.make ?? vehicle.make,
+      yearOfManufacture: details.yearOfManufacture ?? facts.yearOfManufacture,
+      co2Emissions: details.co2Emissions ?? facts.co2,
+    };
+
+    const result = calculateVed(facts);
+    if (!result.ved) {
+      if (identity) {
+        this.logger.warn('No rate for ' + bare + ' from the provider or DVLA tables: ' + result.reason);
+      }
+      return filled;
+    }
+    return {
+      ...filled,
+      ved: {
+        sixMonth: result.ved.sixMonth,
+        twelveMonth: result.ved.twelveMonth,
+        band: 'dvla-table',
+        directDebit: result.ved.directDebit,
+        basis: result.ved.basis,
+      },
+    };
   }
 
   private toHttp(err: VehicleDataError): Error {
@@ -517,7 +635,7 @@ export class VehiclesService {
   ): CachedVehicle {
     const taxBlock =
       asObject(asObject(taxPayload.Results)?.VehicleTaxDetails) ?? {};
-    const identity = identityPayload ? firstResultBlock(identityPayload) : {};
+    const identity = identityPayload ? identityFields(identityPayload) : {};
 
     return {
       make: asString(identity.DvlaMake) ?? asString(identity.Make) ?? asString(taxBlock.Make),
@@ -586,6 +704,27 @@ const firstResultBlock = (payload: Record<string, unknown>): Record<string, unkn
     }
   }
   return {};
+};
+
+/**
+ * The identity package's fields, as one flat record.
+ *
+ * VehicleDetails nests them — `VehicleIdentification.DvlaMake`,
+ * `VehicleHistory.ColourDetails.CurrentColour` — and returns its
+ * ModelDetails block alongside, so its own block is taken by name and
+ * the nested groups lifted up. A package that puts the fields at the
+ * top of its block reads the same way.
+ */
+const identityFields = (payload: Record<string, unknown>): Record<string, unknown> => {
+  const results = asObject(payload.Results) ?? payload;
+  const block = asObject(results.VehicleDetails) ?? firstResultBlock(payload);
+  const nested = [
+    block.VehicleIdentification,
+    block.VehicleStatus,
+    block.DvlaTechnicalDetails,
+    asObject(block.VehicleHistory)?.ColourDetails,
+  ];
+  return Object.assign({}, block, ...nested.map(group => asObject(group) ?? {}));
 };
 
 /**

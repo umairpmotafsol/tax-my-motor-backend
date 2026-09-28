@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, ServiceUnavailableException } 
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 
-import { PricingService, TaxOptionId } from '../pricing/pricing.service';
+import { PricingService, TaxOptionId, vedRatesOf } from '../pricing/pricing.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
 
 export interface PaymentIntentResult {
@@ -57,10 +57,7 @@ export class PaymentsService {
   ): Promise<PaymentIntentResult> {
     const client = this.requireClient();
     const taxInfo = await this.vehicles.vedFor(reg);
-    const pricing = this.pricing.price(option, withV62, {
-      sixMonth: taxInfo.ved?.sixMonth ?? null,
-      twelveMonth: taxInfo.ved?.twelveMonth ?? null,
-    });
+    const pricing = this.pricing.price(option, withV62, vedRatesOf(taxInfo.ved));
     const amount = Math.round(pricing.dueNow * 100);
 
     const intent = await client.paymentIntents.create({

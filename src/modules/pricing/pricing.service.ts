@@ -60,7 +60,23 @@ export interface PriceBreakdown {
 export interface VedRates {
   sixMonth: number | null;
   twelveMonth: number | null;
+  /**
+   * The Direct Debit total, when it is known rather than worked out —
+   * a vehicle priced from DVLA's tables carries the leaflet's figure,
+   * and null there means DVLA sells no Direct Debit for it (an HGV, a
+   * first licence). Absent, it is the annual rate plus the surcharge.
+   */
+  directDebit?: number | null;
 }
+
+/** The rates a tax lookup's `ved` block prices at — what every caller passes in. */
+export const vedRatesOf = (
+  ved: { sixMonth: number | null; twelveMonth: number | null; directDebit?: number | null } | null,
+): VedRates => ({
+  sixMonth: ved?.sixMonth ?? null,
+  twelveMonth: ved?.twelveMonth ?? null,
+  ...(ved && ved.directDebit !== undefined ? { directDebit: ved.directDebit } : {}),
+});
 
 /**
  * DVLA's surcharge for paying twelve months by Direct Debit. The
@@ -176,7 +192,9 @@ export class PricingService {
         : id === 'dd'
           ? annual === null
             ? null
-            : round2(annual * DIRECT_DEBIT_SURCHARGE)
+            : ved.directDebit !== undefined
+              ? ved.directDebit
+              : round2(annual * DIRECT_DEBIT_SURCHARGE)
           : annual;
 
     return rate === null || !Number.isFinite(rate) || rate < 0 ? null : rate;

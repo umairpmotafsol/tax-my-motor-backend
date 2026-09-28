@@ -6,7 +6,7 @@ import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { VehicleTaxInfo, VehiclesService } from '../vehicles/vehicles.service';
-import { PricingService, TaxOptionId, VedRates } from './pricing.service';
+import { PricingService, TaxOptionId, vedRatesOf } from './pricing.service';
 
 class QuoteDto {
   @IsIn(['6m', '12m', 'dd'], { message: 'Please choose a tax option.' })
@@ -41,6 +41,8 @@ const taxSummary = (info: VehicleTaxInfo) => ({
   daysRemaining: info.daysRemaining,
   motStatus: info.motStatus,
   band: info.ved?.band ?? null,
+  /** Which DVLA leaflet row a `dvla-table` price came from; null for the provider's own rates. */
+  basis: info.ved?.basis ?? null,
   checkedAt: info.checkedAt,
   stale: info.stale,
 });
@@ -101,7 +103,4 @@ export class PricingController {
   }
 }
 
-const ratesOf = (info: VehicleTaxInfo): VedRates => ({
-  sixMonth: info.ved?.sixMonth ?? null,
-  twelveMonth: info.ved?.twelveMonth ?? null,
-});
+const ratesOf = (info: VehicleTaxInfo) => vedRatesOf(info.ved);

@@ -93,7 +93,19 @@ export class VehicleDataClient {
    * missing optional package must not fail the screen.
    */
   async fetchDetails(bare: string): Promise<VehicleDataResult | null> {
-    const pkg = this.settings.detailsPackage;
+    return this.fetchOptional(bare, this.settings.detailsPackage);
+  }
+
+  /**
+   * The valuation package — the list price when new — or null when none
+   * is configured or it did not answer. The dearest call of the three,
+   * so the service asks for it only when the price could change the tax.
+   */
+  async fetchValuation(bare: string): Promise<VehicleDataResult | null> {
+    return this.fetchOptional(bare, this.settings.valuationPackage);
+  }
+
+  private async fetchOptional(bare: string, pkg: string): Promise<VehicleDataResult | null> {
     if (!pkg) {
       return null;
     }
@@ -101,7 +113,7 @@ export class VehicleDataClient {
       return await this.fetchPackage(bare, pkg);
     } catch (err) {
       this.logger.warn(
-        'Identity package "' + pkg + '" did not answer for ' + bare + ': ' + (err as Error).message,
+        'Package "' + pkg + '" did not answer for ' + bare + ': ' + (err as Error).message,
       );
       return null;
     }

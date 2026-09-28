@@ -35,6 +35,14 @@ export class VehicleTaxLookup {
   @Prop({ type: Object, default: null })
   detailsRaw!: Record<string, unknown> | null;
 
+  /**
+   * The valuation package's response, for the list price. Only present
+   * on a car the provider gave no rate for and the price could change
+   * the tax on — and kept, because it is the dearest of the three calls.
+   */
+  @Prop({ type: Object, default: null })
+  valuationRaw!: Record<string, unknown> | null;
+
   /** The mapped, customer-safe view — what the API actually serves. */
   @Prop({ type: Object, required: true })
   details!: Record<string, unknown>;

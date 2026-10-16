@@ -11,6 +11,7 @@ export enum NotificationType {
   Unassigned = 'unassigned',
   BankChangesRequested = 'bank_changes_requested',
   BankApproved = 'bank_approved',
+  OrderFlagged = 'order_flagged',
 }
 
 export const NOTIFICATION_META: Record<
@@ -44,4 +45,5 @@ export const NOTIFICATION_META: Record<
     icon: 'alert',
   },
   [NotificationType.BankApproved]: { label: 'Mandate Approved', tone: 'green', icon: 'file' },
+  [NotificationType.OrderFlagged]: { label: 'Order Flagged', tone: 'red', icon: 'alert' },
 };

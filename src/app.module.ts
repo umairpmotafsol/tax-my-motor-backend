@@ -9,7 +9,9 @@ import { RolesGuard } from './common/guards/roles.guard';
 import configuration from './config/configuration';
 import { validationSchema } from './config/validation.schema';
 import { DatabaseModule } from './database/database.module';
+import { AddressesModule } from './modules/addresses/addresses.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { ExtrasModule } from './modules/extras/extras.module';
 import { HealthModule } from './modules/health/health.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -17,6 +19,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { PushModule } from './modules/push/push.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { SeedModule } from './modules/seed/seed.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
@@ -41,11 +44,14 @@ import { VehiclesModule } from './modules/vehicles/vehicles.module';
     AuthModule,
     SuppliersModule,
     VehiclesModule,
+    AddressesModule,
     PricingModule,
     PaymentsModule,
     OrdersModule,
+    ExtrasModule,
     InvoicesModule,
     NotificationsModule,
+    PushModule,
     ReferralsModule,
     SeedModule,
     HealthModule,

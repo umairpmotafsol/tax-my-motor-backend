@@ -28,10 +28,9 @@ import { OrderDocument } from './schemas/order.schema';
 export interface SupplierRef {
   id: string;
   name: string;
-  company: string;
 }
 
-type SupplierLookup = Map<string, { name: string; company: string }>;
+type SupplierLookup = Map<string, { name: string }>;
 
 /* ------------------------------ shared pieces ------------------------------ */
 
@@ -62,7 +61,7 @@ function supplierRef(order: OrderDocument, lookup?: SupplierLookup): SupplierRef
   }
   const id = String(order.supplier);
   const found = lookup?.get(id);
-  return { id, name: found?.name ?? 'Unknown supplier', company: found?.company ?? '' };
+  return { id, name: found?.name ?? 'Unknown supplier' };
 }
 
 function baseOrder(order: OrderDocument) {
@@ -90,6 +89,29 @@ function baseOrder(order: OrderDocument) {
     v62Requested: order.v62Requested,
     placedAt: iso(order.placedAt),
     orderDate: iso(order.placedAt),
+    cancelledAt: iso(order.cancelledAt),
+  };
+}
+
+/**
+ * The flag, for the two views that deal with one. `flagged` is the live
+ * question — is this waiting on an admin — and stops being true once an
+ * admin has answered; `flag` stays, as the record of what was asked and
+ * what the admin said back.
+ */
+function flagView(order: OrderDocument) {
+  return {
+    flagged: Boolean(order.flag) && !order.flag!.resolvedAt,
+    flag: order.flag
+      ? {
+          at: iso(order.flag.at),
+          source: order.flag.source,
+          reason: order.flag.reason,
+          resolvedAt: iso(order.flag.resolvedAt),
+          resolution: order.flag.resolution ?? null,
+          response: order.flag.response ?? '',
+        }
+      : null,
   };
 }
 
@@ -170,15 +192,20 @@ export function toCustomerOrder(order: OrderDocument) {
 /**
  * The supplier app's own status vocabulary. It has no acceptance step
  * and no separate "ready" state: an order is waiting on an invoice,
- * overdue, waiting on an admin to send it, or done.
+ * overdue, waiting on an admin to send it, done, or cancelled.
  */
 export type SupplierOrderStatus =
   | 'awaiting_invoice'
   | 'overdue'
   | 'awaiting_whatsapp'
-  | 'completed';
+  | 'completed'
+  | 'cancelled';
 
 export function toSupplierStatus(order: OrderDocument): SupplierOrderStatus {
+  /* First, because a cancelled order may have got any distance before it was. */
+  if (order.status === OrderStatus.Cancelled) {
+    return 'cancelled';
+  }
   if (order.invoiceStatus === InvoiceStatus.Sent || order.deliveredAt) {
     return 'completed';
   }
@@ -200,6 +227,7 @@ export function toSupplierOrder(order: OrderDocument) {
   return {
     ...base,
     status: toSupplierStatus(order),
+    ...flagView(order),
     /* The supplier app tracks upload, not the admin's send-and-review states. */
     invoiceStatus:
       order.invoiceStatus === InvoiceStatus.Pending ? InvoiceStatus.Pending : InvoiceStatus.Uploaded,
@@ -208,6 +236,12 @@ export function toSupplierOrder(order: OrderDocument) {
     /** When this order goes overdue. The countdown reads from here. */
     dueAt: iso(order.dueAt),
     invoiceUploadedAt: iso(order.invoiceUploadedAt),
+    /*
+     * When the supplier's part ended: their own upload, or an admin
+     * completing the order for them. The app lists completed orders for
+     * the day they were completed and then lets them go.
+     */
+    completedAt: iso(order.invoiceUploadedAt ?? order.invoiceSentAt),
     deliveredAt: iso(order.deliveredAt),
     invoicePhoto: order.invoice
       ? { uri: invoiceHref(order), capturedAt: iso(order.invoice.capturedAt) }
@@ -226,7 +260,10 @@ export function toSupplierOrder(order: OrderDocument) {
     v62: order.v62
       ? {
           registrationNumber: order.v62.registrationNumber,
-          makeModel: [order.v62.make, order.v62.model].filter(Boolean).join(' '),
+          /* The model line can carry the make already ("2015 Vauxhall") — it is not said twice. */
+          makeModel: order.v62.model.toUpperCase().includes(order.v62.make.toUpperCase())
+            ? order.v62.model
+            : [order.v62.make, order.v62.model].filter(Boolean).join(' '),
           colour: order.v62.colour,
           taxationClass: order.v62.taxClass,
         }
@@ -246,6 +283,7 @@ export function toAdminOrder(order: OrderDocument, suppliers?: SupplierLookup) {
       phone: order.customerSnapshot.phone,
     },
     supplier: supplierRef(order, suppliers),
+    ...flagView(order),
     deliveryAddress: order.deliveryAddress,
     pricing: order.pricing,
     payment: paymentSummary(order),
@@ -258,6 +296,19 @@ export function toAdminOrder(order: OrderDocument, suppliers?: SupplierLookup) {
      * saying so beats sending a link that answers 401.
      */
     invoiceShareable: order.invoice?.provider === 'cloudinary',
+    /*
+     * Whether the invoice email actually left. Null when none has been
+     * attempted, which is every WhatsApp order and any email order from
+     * before the server sent them.
+     */
+    invoiceEmail: order.invoiceEmail
+      ? {
+          status: order.invoiceEmail.status,
+          to: order.invoiceEmail.to,
+          at: iso(order.invoiceEmail.at),
+          reason: order.invoiceEmail.reason,
+        }
+      : null,
     /*
      * Masked in the admin view. An admin coordinates the order; the
      * supplier is the one who checks the mandate against a statement,

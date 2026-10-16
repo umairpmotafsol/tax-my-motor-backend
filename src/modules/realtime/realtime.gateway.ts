@@ -116,6 +116,16 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.toAdmins('order:overdue', payload);
   }
 
+  /**
+   * A flag is for the admins. The supplier's own copy just refreshes,
+   * and the customer is told nothing — it is not theirs to act on.
+   */
+  orderFlagged(order: OrderDocument): void {
+    const payload = this.summary(order);
+    this.toAdmins('order:flagged', payload);
+    this.toSupplier(order, 'order:update', payload);
+  }
+
   /** The customer has to be told their details came back. */
   bankChangesRequested(order: OrderDocument): void {
     const payload = this.summary(order);

@@ -6,6 +6,29 @@ import { Role } from '../../../common/enums/role.enum';
 export type UserDocument = HydratedDocument<User>;
 
 /**
+ * One phone this account can be pushed to.
+ *
+ * Kept on the user rather than in a collection of its own: a token is
+ * only ever read by way of the account it belongs to, and one account
+ * has a handful of them at most — a phone, a spare, a reinstall that
+ * has not expired yet. Firebase hands back the dead ones on every send
+ * and `PushService` prunes them, so the list does not grow forever.
+ */
+@Schema({ _id: false })
+export class DeviceToken {
+  @Prop({ required: true, index: true })
+  token!: string;
+
+  @Prop({ type: String, enum: ['ios', 'android'], required: true })
+  platform!: 'ios' | 'android';
+
+  @Prop({ type: Date, default: () => new Date() })
+  registeredAt!: Date;
+}
+
+export const DeviceTokenSchema = SchemaFactory.createForClass(DeviceToken);
+
+/**
  * One account collection for all three apps. The role decides which
  * order book the holder sees; a supplier additionally carries the
  * supplier they work for, which is what scopes their queries.
@@ -78,6 +101,17 @@ export class User {
 
   @Prop({ type: Date, default: null })
   lastLoginAt!: Date | null;
+
+  /* --- push ------------------------------------------------------------- */
+
+  /**
+   * The phones to notify. Empty for anyone who has never signed in on
+   * one, or who declined the permission — which is a silent no-op, not
+   * an error: push is a convenience on top of the app, never the only
+   * way to learn something.
+   */
+  @Prop({ type: [DeviceTokenSchema], default: [] })
+  deviceTokens!: DeviceToken[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

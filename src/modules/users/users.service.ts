@@ -18,7 +18,7 @@ export interface CustomerOrderStats {
   lifetimeSpend: number;
   prefersWhatsapp: boolean;
   everRequestedV62: boolean;
-  latestOrder: { id: string; orderNumber: string; status: string; placedAt: string } | null;
+  latestOrder: { id: string; orderNumber: string; reg: string; status: string; placedAt: string } | null;
 }
 
 export interface CreateUserInput {
@@ -180,7 +180,7 @@ export class UsersService {
       lifetimeSpend: number;
       prefersWhatsapp: boolean;
       everRequestedV62: boolean;
-      latestOrder: { id: Types.ObjectId; orderNumber: string; status: string; placedAt: Date };
+      latestOrder: { id: Types.ObjectId; orderNumber: string; reg: string; status: string; placedAt: Date };
     }>([
       { $match: { customer: { $in: ids } } },
       /* Sorted before grouping so $first below picks up each customer's newest order. */
@@ -196,7 +196,13 @@ export class UsersService {
           prefersWhatsapp: { $max: '$whatsappRequested' },
           everRequestedV62: { $max: '$v62Requested' },
           latestOrder: {
-            $first: { id: '$_id', orderNumber: '$orderNumber', status: '$status', placedAt: '$placedAt' },
+            $first: {
+              id: '$_id',
+              orderNumber: '$orderNumber',
+              reg: '$reg',
+              status: '$status',
+              placedAt: '$placedAt',
+            },
           },
         },
       },
@@ -214,6 +220,7 @@ export class UsersService {
           latestOrder: {
             id: String(row.latestOrder.id),
             orderNumber: row.latestOrder.orderNumber,
+            reg: row.latestOrder.reg,
             status: row.latestOrder.status,
             placedAt: new Date(row.latestOrder.placedAt).toISOString(),
           },
@@ -286,6 +293,59 @@ export class UsersService {
 
   async recordLogin(id: string | Types.ObjectId): Promise<void> {
     await this.userModel.updateOne({ _id: id }, { $set: { lastLoginAt: new Date() } });
+  }
+
+  /** Every account holding a role — the admins, for a push to all of them. */
+  async listByRole(role: Role): Promise<UserDocument[]> {
+    return this.userModel.find({ role, active: true }).sort({ createdAt: 1 });
+  }
+
+  /* --------------------------------- devices -------------------------------- */
+
+  /**
+   * Remembers a phone to push to.
+   *
+   * Taken off whoever held it first: a token identifies an app install,
+   * not a person, and the supplier app is shared ground — an admin who
+   * signs in on a supplier's handset must not keep receiving that
+   * supplier's orders afterwards, nor the other way round. Whoever
+   * signed in last owns it.
+   */
+  async registerDevice(
+    id: string | Types.ObjectId,
+    token: string,
+    platform: 'ios' | 'android',
+  ): Promise<void> {
+    await this.userModel.updateMany(
+      { 'deviceTokens.token': token },
+      { $pull: { deviceTokens: { token } } },
+    );
+    await this.userModel.updateOne(
+      { _id: id },
+      { $push: { deviceTokens: { token, platform, registeredAt: new Date() } } },
+    );
+  }
+
+  /** Signing out, or a token Firebase has told us is dead. */
+  async forgetDevices(tokens: string[]): Promise<void> {
+    if (tokens.length === 0) {
+      return;
+    }
+    await this.userModel.updateMany(
+      { 'deviceTokens.token': { $in: tokens } },
+      { $pull: { deviceTokens: { token: { $in: tokens } } } },
+    );
+  }
+
+  /** The tokens to send to, de-duplicated — two accounts can share a phone. */
+  async deviceTokensFor(ids: (string | Types.ObjectId)[]): Promise<string[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const users = await this.userModel
+      .find({ _id: { $in: ids.map(id => new Types.ObjectId(id)) } })
+      .select('deviceTokens');
+    return [...new Set(users.flatMap(user => user.deviceTokens.map(device => device.token)))];
   }
 
   /* ------------------------------- referrals ------------------------------- */

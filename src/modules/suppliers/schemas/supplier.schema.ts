@@ -19,21 +19,11 @@ export class Supplier {
   @Prop({ required: true, trim: true })
   name!: string;
 
-  @Prop({ required: true, trim: true })
-  company!: string;
-
-  /** The person at the supplier, not an account — that is a User. */
-  @Prop({ trim: true, default: '' })
-  contact!: string;
-
   @Prop({ lowercase: true, trim: true, default: '' })
   email!: string;
 
   @Prop({ trim: true, default: '' })
   phone!: string;
-
-  @Prop({ trim: true, default: '' })
-  region!: string;
 
   @Prop({
     type: String,

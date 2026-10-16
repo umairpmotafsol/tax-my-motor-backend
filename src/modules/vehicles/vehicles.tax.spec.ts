@@ -5,6 +5,8 @@
  * test asserts `fetch` was never reached, because a test suite that
  * quietly spends money is worse than no suite at all.
  */
+import { ServiceUnavailableException } from '@nestjs/common';
+
 import { VehicleDataClient, VehicleDataError } from './vehicle-data.client';
 import { VEHICLE_TAX_SAMPLE } from './fixtures/vehicle-tax.sample';
 import {
@@ -256,6 +258,57 @@ describe('spending guards', () => {
     // The claimed slot is handed back.
     expect(usage.updateOne).toHaveBeenCalled();
   });
+
+  /*
+   * What a sandbox key really answers for a plate outside its test set.
+   * It used to be read as "no such vehicle", so a customer with a real,
+   * registered car was told it did not exist.
+   */
+  it('does not call a refused lookup a missing vehicle', async () => {
+    const usage = {
+      findOneAndUpdate: jest.fn(async () => ({ calls: 1 })),
+      updateOne: jest.fn(() => ({ catch: async () => undefined })),
+    };
+    const client = new VehicleDataClient(usage as never, configFor({ live: true }) as never);
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ResponseInformation: {
+          StatusCode: 6,
+          StatusMessage: 'SandboxValidationFailure',
+          IsSuccessStatusCode: false,
+        },
+        Results: {},
+      }),
+    } as never);
+
+    await expect(client.fetchTax('YD23OGM')).rejects.toMatchObject({
+      reason: 'upstream',
+      message: expect.stringContaining('SandboxValidationFailure'),
+    });
+    expect(usage.updateOne).toHaveBeenCalled();
+  });
+
+  /* A plate on retention: code 21, and a vehicle all the same. */
+  it('accepts a non-zero status the provider itself marks as a success', async () => {
+    const usage = {
+      findOneAndUpdate: jest.fn(async () => ({ calls: 1 })),
+      updateOne: jest.fn(() => ({ catch: async () => undefined })),
+    };
+    const client = new VehicleDataClient(usage as never, configFor({ live: true }) as never);
+    const answer = {
+      ...VEHICLE_TAX_SAMPLE,
+      ResponseInformation: {
+        StatusCode: 21,
+        StatusMessage: 'PlateInRetentionLastVehicleReturned',
+        IsSuccessStatusCode: true,
+      },
+    };
+    fetchSpy.mockResolvedValue({ ok: true, json: async () => answer } as never);
+
+    await expect(client.fetchTax('AJ11JJJ')).resolves.toMatchObject({ source: 'live' });
+    expect(usage.updateOne).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -381,10 +434,107 @@ describe('registration lookup', () => {
       configFor({}, 'production') as never,
     );
 
+    // Nobody looked, so nobody may say the vehicle does not exist.
     await expect(service.lookup('AP52HOW')).rejects.toThrow(
-      'We could not find a vehicle with that registration.',
+      'We could not check that registration just now. Please try again shortly.',
     );
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('says the lookup failed, not that the car is missing, when the provider would not answer', async () => {
+    const live = configFor({ live: true }, 'production');
+    const client = new VehicleDataClient({} as never, live as never);
+    jest
+      .spyOn(client, 'fetchTax')
+      .mockRejectedValue(
+        new VehicleDataError(
+          'upstream',
+          'The vehicle data provider answered SandboxValidationFailure (code 6).',
+        ),
+      );
+    const service = new VehiclesService(
+      emptyRegister as never,
+      cacheModel(null) as never,
+      client,
+      live as never,
+    );
+
+    const refusal = service.lookup('YD23OGM');
+    await expect(refusal).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(refusal).rejects.toThrow('We could not check that registration just now.');
+  });
+
+  it('refuses a plate the provider has no record of, in production', async () => {
+    const live = configFor({ live: true }, 'production');
+    const client = new VehicleDataClient({} as never, live as never);
+    jest
+      .spyOn(client, 'fetchTax')
+      .mockRejectedValue(new VehicleDataError('not-found', 'No record.'));
+    const service = new VehiclesService(
+      emptyRegister as never,
+      cacheModel(null) as never,
+      client,
+      live as never,
+    );
+
+    await expect(service.lookup('ZZ99ZZZ')).rejects.toThrow(
+      'We could not find a vehicle with that registration.',
+    );
+  });
+
+  /* The registration step does not gate outside production; pricing asks for itself. */
+  it('lets an unrecognised plate through to pricing in development', async () => {
+    const client = new VehicleDataClient({} as never, configFor({ live: true }) as never);
+    jest
+      .spyOn(client, 'fetchTax')
+      .mockRejectedValue(new VehicleDataError('not-found', 'No record.'));
+    const service = new VehiclesService(
+      emptyRegister as never,
+      cacheModel(null) as never,
+      client,
+      configFor({ live: true }) as never,
+    );
+
+    expect(await service.lookup('ZZ99ZZZ')).toMatchObject({ reg: 'ZZ99 ZZZ', known: false });
+  });
+
+  it('still answers from the register when the provider has no record', async () => {
+    const client = new VehicleDataClient({} as never, configFor() as never);
+    jest
+      .spyOn(client, 'fetchTax')
+      .mockRejectedValue(new VehicleDataError('not-found', 'No record.'));
+    const register = {
+      findOne: async () => ({
+        make: 'Ford Fiesta',
+        variant: '1.0 EcoBoost',
+        colour: 'Blue',
+        vin: 'WF0FXXWPCFEA12345',
+        fuelType: 'Petrol',
+      }),
+    };
+    const service = new VehiclesService(
+      register as never,
+      cacheModel(null) as never,
+      client,
+      configFor() as never,
+    );
+
+    expect(await service.lookup('ZZ99ZZZ')).toMatchObject({ make: 'Ford Fiesta', known: true });
+  });
+
+  it('keeps the development stand-in for a provider that could not be reached', async () => {
+    const client = new VehicleDataClient({} as never, configFor() as never);
+    jest
+      .spyOn(client, 'fetchTax')
+      .mockRejectedValue(new VehicleDataError('upstream', 'No answer.'));
+    const service = new VehiclesService(
+      emptyRegister as never,
+      cacheModel(null) as never,
+      client,
+      configFor() as never,
+    );
+
+    expect((await service.lookup('ZZ99ZZZ')).known).toBe(false);
   });
 });
 

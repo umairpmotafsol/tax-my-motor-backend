@@ -17,7 +17,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { paginate } from '../../common/dto/pagination.dto';
 import { Role } from '../../common/enums/role.enum';
 import { BankReviewService } from '../bank/bank-review.service';
-import { ListOrdersDto, RequestBankChangesDto } from './dto/order.dto';
+import { FlagOrderDto, ListOrdersDto, RequestBankChangesDto } from './dto/order.dto';
 import { toBankReviewView, toSupplierOrder } from './orders.serializer';
 import { OrdersService } from './orders.service';
 
@@ -52,6 +52,19 @@ export class SupplierOrdersController {
   @ApiOperation({ summary: 'One assigned order' })
   async detail(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return toSupplierOrder(await this.orders.findScoped(id, user));
+  }
+
+  @Post(':id/flag')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Flag an order of mine for an admin to look at' })
+  async flag(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    /* The comment is optional, so the app may send no body at all. */
+    @Body() dto?: FlagOrderDto,
+  ) {
+    const order = await this.orders.findScoped(id, user);
+    return toSupplierOrder(await this.orders.flag(order, user, dto?.reason ?? ''));
   }
 
   /* ------------------------------ the bank loop ----------------------------- */

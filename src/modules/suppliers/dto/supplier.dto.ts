@@ -23,18 +23,6 @@ export class CreateSupplierDto {
   @Transform(trim)
   name!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(160)
-  @Transform(trim)
-  company!: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  @Transform(trim)
-  contact?: string;
-
   @IsOptional()
   @IsEmail()
   @Transform(trim)
@@ -45,12 +33,6 @@ export class CreateSupplierDto {
   @MaxLength(32)
   @Transform(trim)
   phone?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(80)
-  @Transform(trim)
-  region?: string;
 
   @IsOptional()
   @IsEnum(SupplierStatus)
@@ -72,12 +54,12 @@ export class SetSupplierStatusDto {
 
 /**
  * Creating the login that goes with a supplier. Kept separate from the
- * supplier record: the company is one thing, the person who signs in on
+ * supplier record: the supplier is one thing, the person who signs in on
  * its behalf is another, and a supplier can outlive any one of them.
  *
  * Only the email address is required, because only the email address is
- * the supplier's to give. The name falls back to the contact already on
- * the supplier record, and an omitted password is generated — which is
+ * the supplier's to give. The name falls back to the supplier's own,
+ * and an omitted password is generated — which is
  * the normal case: nobody should be inventing a password on a
  * colleague's behalf, and one that is generated and shown once is
  * harder to reuse from somewhere else.

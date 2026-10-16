@@ -167,14 +167,22 @@ export class VehicleDataClient {
     }
 
     const status = readStatus(payload);
-    if (status.code !== null && status.code !== 0) {
-      // The provider charges only for a successful return, so a "no
-      // record" answer costs nothing and should not cost budget either.
+    if (!status.ok) {
+      // The provider charges only for a successful return, so a refusal
+      // costs nothing and should not cost budget either.
       await this.releaseBudget();
-      throw new VehicleDataError(
-        'not-found',
-        status.message ?? 'No tax record was found for that registration.',
-      );
+      if (status.notFound) {
+        throw new VehicleDataError(
+          'not-found',
+          status.message ?? 'No tax record was found for that registration.',
+        );
+      }
+      // Anything else is the provider declining to answer — a sandbox
+      // key asked about a plate outside its test set, an account
+      // problem — and says nothing about whether the vehicle exists.
+      const said = (status.message ?? 'an unexplained status') + ' (code ' + status.code + ')';
+      this.logger.warn('Vehicle Data Global refused the lookup for ' + bare + ': ' + said + '.');
+      throw new VehicleDataError('upstream', 'The vehicle data provider answered ' + said + '.');
     }
 
     return { payload, source: 'live' };
@@ -266,15 +274,56 @@ function utcDay(date: Date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** A status message that means the provider looked and has no such vehicle. */
+const NO_SUCH_VEHICLE =
+  /not\s*found|no\s*(results?|match|record|data|vehicle)|invalid\s*(vrm|search|registration)|unknown\s*(vrm|vehicle)/i;
+
 /**
+ * Whether a response carries usable data, and if not, why not.
+ *
  * The provider reports status twice: once for the request as a whole
- * and once inside the package. Either being non-zero means there is no
- * usable data, so read whichever is present and non-zero first.
+ * and once inside each package block. A non-zero code is not in itself
+ * a failure — a plate held on retention comes back as code 21,
+ * "PlateInRetentionLastVehicleReturned", with the vehicle attached — so
+ * the envelope's own `IsSuccessStatusCode` is believed where it is
+ * present, and the codes are only read directly for a response without
+ * one.
+ *
+ * A failure is `notFound` only when the provider says so. A sandbox key
+ * asked about a plate outside its test set answers code 6,
+ * "SandboxValidationFailure"; reading that as "no such vehicle" told
+ * customers their car did not exist when nobody had looked.
  */
 function readStatus(payload: Record<string, unknown>): {
+  ok: boolean;
+  notFound: boolean;
   code: number | null;
   message: string | null;
 } {
+  const failure = readFailure(payload);
+  if (!failure) {
+    return { ok: true, notFound: false, code: 0, message: null };
+  }
+  return {
+    ok: false,
+    notFound: failure.message !== null && NO_SUCH_VEHICLE.test(failure.message),
+    code: failure.code,
+    message: failure.message,
+  };
+}
+
+/** One place a status is reported: the envelope, or a package block. */
+type Reported = { code: number | null; message: string | null };
+
+const reported = (source: Record<string, unknown>): Reported => ({
+  code: typeof source.StatusCode === 'number' ? source.StatusCode : null,
+  message: typeof source.StatusMessage === 'string' ? source.StatusMessage : null,
+});
+
+const failed = (status: Reported): boolean => status.code !== null && status.code !== 0;
+
+/** The status that makes a response unusable, or null when it is fine. */
+function readFailure(payload: Record<string, unknown>): Reported | null {
   const envelope = (payload.ResponseInformation ?? payload.ResponseInfo ?? {}) as Record<
     string,
     unknown
@@ -283,26 +332,20 @@ function readStatus(payload: Record<string, unknown>): {
   // Each package names its own block under Results — VehicleTaxDetails,
   // VehicleDetails, KeyVehicleDetails — so read whichever is there
   // rather than only the one the tax package uses.
-  const blocks = Object.values(results).filter(
-    (value): value is Record<string, unknown> =>
-      Boolean(value) && typeof value === 'object' && !Array.isArray(value),
-  );
-  const pkg = blocks[0] ?? {};
+  const blocks = Object.values(results)
+    .filter(
+      (value): value is Record<string, unknown> =>
+        Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+    )
+    .map(reported);
 
-  for (const source of [envelope, ...blocks]) {
-    const code = source.StatusCode;
-    if (typeof code === 'number' && code !== 0) {
-      return {
-        code,
-        message: typeof source.StatusMessage === 'string' ? source.StatusMessage : null,
-      };
+  if (typeof envelope.IsSuccessStatusCode === 'boolean') {
+    if (!envelope.IsSuccessStatusCode) {
+      return reported(envelope);
     }
+    // Succeeded as a request; unusable only if every block in it failed.
+    return blocks.length > 0 && blocks.every(failed) ? blocks[0] : null;
   }
-  const code =
-    typeof envelope.StatusCode === 'number'
-      ? envelope.StatusCode
-      : typeof pkg.StatusCode === 'number'
-        ? pkg.StatusCode
-        : null;
-  return { code, message: null };
+  // No verdict from the provider, so any non-zero code is taken as one.
+  return [reported(envelope), ...blocks].find(failed) ?? null;
 }

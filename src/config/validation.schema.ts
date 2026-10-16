@@ -28,6 +28,9 @@ export const validationSchema = Joi.object({
   RESPONSE_TIMEOUT_MS: Joi.number().min(1000).default(420000),
   SERVICE_FEE: Joi.number().min(0).default(40),
   V62_FEE: Joi.number().min(0).default(40),
+  /** Stripe will not take a card payment under 30p. */
+  VIN_FEE: Joi.number().min(0.3).default(0.99),
+  PLATES_FEE: Joi.number().min(0.3).default(20),
 
   UPLOAD_DIR: Joi.string().default('./uploads'),
   MAX_UPLOAD_BYTES: Joi.number().min(1024).default(10485760),
@@ -49,6 +52,14 @@ export const validationSchema = Joi.object({
   STRIPE_SECRET_KEY: Joi.string().allow('').default(''),
   STRIPE_WEBHOOK_SECRET: Joi.string().allow('').default(''),
   STRIPE_PUBLISHABLE_KEY: Joi.string().allow('').default(''),
+
+  // Blank leaves email off: the app boots, and an invoice that could not
+  // be emailed is recorded as not sent rather than as delivered.
+  SMTP_HOST: Joi.string().allow('').default(''),
+  SMTP_PORT: Joi.number().port().default(465),
+  SMTP_USERNAME: Joi.string().allow('').default(''),
+  SMTP_PASSWORD: Joi.string().allow('').default(''),
+  MAIL_FROM: Joi.string().allow('').default(''),
 
   VEHICLE_DATA_API_KEY: Joi.string().allow('').default(''),
   VEHICLE_DATA_BASE_URL: Joi.string().allow('').default('https://uk.api.vehicledataglobal.com'),
@@ -75,4 +86,8 @@ export const validationSchema = Joi.object({
   VEHICLE_DATA_DAILY_LIMIT: Joi.number().min(0).default(200),
   VEHICLE_DATA_MIN_INTERVAL_MS: Joi.number().min(0).default(1100),
   VEHICLE_DATA_TIMEOUT_MS: Joi.number().min(1000).default(10000),
+
+  /** Empty means "Find address" is off and customers type their address. */
+  ADDRESS_LOOKUP_URL: Joi.string().uri({ scheme: ['http', 'https'] }).allow('').default(''),
+  ADDRESS_LOOKUP_TIMEOUT_MS: Joi.number().min(1000).default(8000),
 });

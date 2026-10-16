@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaxMyMotor Tax Estimator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=Barlow+Semi+Condensed:wght@700&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f6f8;
+    --surface: #ffffff;
+    --ink: #15202a;
+    --muted: #5a6a77;
+    --line: #d7dfe5;
+    --accent: #0b5e78;
+    --accent-ink: #ffffff;
+    --plate: #f7d117;
+    --plate-ink: #111111;
+    --error: #a3261b;
+    --font: 'Public Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --plate-font: 'Barlow Semi Condensed', 'Arial Narrow', system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0f1519;
+      --surface: #172027;
+      --ink: #e5ecf0;
+      --muted: #93a3ae;
+      --line: #2a3640;
+      --accent: #5bb6d3;
+      --accent-ink: #0f1519;
+      --error: #f08a7e;
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.5;
+    padding: 0 16px;
+  }
+  .wrap {
+    max-width: 560px;
+    margin: 0 auto;
+    padding-block: 48px;
+    display: grid;
+    gap: 24px;
+  }
+  h1 {
+    font-size: 24px;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  form {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #reg {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-family: var(--plate-font);
+    font-weight: 700;
+    font-size: 32px;
+    letter-spacing: 0.08em;
+    text-align: center;
+    text-transform: uppercase;
+    background: var(--plate);
+    color: var(--plate-ink);
+    border: 2px solid #111111;
+    border-radius: 8px;
+    padding: 6px 12px;
+  }
+  #reg::placeholder { color: rgba(0, 0, 0, 0.35); }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 16px;
+    padding: 0 22px;
+    min-height: 56px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: progress; }
+  #reg:focus-visible, button:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .result { display: grid; gap: 12px; }
+  .vehicle { margin: 0; font-weight: 600; }
+  .status { margin: 0; font-size: 14px; color: var(--muted); }
+  .prices {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 480px) {
+    .prices { grid-template-columns: minmax(0, 1fr); }
+  }
+  .price {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    display: grid;
+    gap: 4px;
+    align-content: start;
+  }
+  .price .term { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .price .amount {
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+  .price .sub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .price.off .amount { font-size: 17px; font-weight: 600; color: var(--muted); }
+  .message { margin: 0; color: var(--muted); }
+  .message.error { color: var(--error); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vehicle tax estimator</h1>
+
+  <form id="form" autocomplete="off">
+    <label for="reg" hidden>Number plate</label>
+    <input id="reg" type="text" maxlength="8" placeholder="ENTER REG" spellcheck="false" autocapitalize="characters" required>
+    <button type="submit" id="go">Get prices</button>
+  </form>
+
+  <div id="result" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  /*
+   * The deployed TaxMyMotor backend. It only answers pages served from an
+   * address in its CORS_ORIGINS setting on Heroku, so add wherever this
+   * page is hosted there (e.g. https://estimator.example.com).
+   */
+  const API = 'https://taxmymotor-backend-7834ab1f6780.herokuapp.com/api';
+
+  const TERMS = [
+    ['6m', '6 months'],
+    ['12m', '12 months'],
+    ['dd', 'Direct Debit'],
+  ];
+
+  const form = document.getElementById('form');
+  const reg = document.getElementById('reg');
+  const go = document.getElementById('go');
+  const result = document.getElementById('result');
+
+  const money = v => v.toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function message(text, isError) {
+    result.innerHTML = '<p class="message' + (isError ? ' error' : '') + '">' + esc(text) + '</p>';
+  }
+
+  /** GET a backend route and unwrap its `{ success, data }` envelope. */
+  async function get(path) {
+    let res;
+    try {
+      res = await fetch(API + path, { headers: { Accept: 'application/json' } });
+    } catch (e) {
+      throw new Error(location.protocol === 'file:'
+        ? 'This page has to be opened from a web address, not as a file. The backend refuses pages opened from disk.'
+        : 'Could not reach the backend. If this keeps happening, add ' + location.origin + ' to CORS_ORIGINS on the backend.');
+    }
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body || body.success === false) {
+      const msg = body && body.message;
+      if (res.status === 429) throw new Error('Too many lookups in a minute. Wait a moment and try again.');
+      throw new Error(Array.isArray(msg) ? msg.join(' ') : msg || 'Something went wrong. Please try again.');
+    }
+    return body.data;
+  }
+
+  function card(title, option) {
+    if (!option || !option.available) {
+      return '<div class="price off"><span class="term">' + title + '</span>' +
+        '<span class="amount">Not offered</span>' +
+        '<span class="sub">' + esc((option && option.unavailableReason) || 'Not available for this vehicle.') + '</span></div>';
+    }
+    const sub = option.instalments > 1
+      ? option.instalments + ' × ' + money(Math.round(option.tax / option.instalments * 100) / 100)
+      : 'Paid once';
+    return '<div class="price"><span class="term">' + title + '</span>' +
+      '<span class="amount">' + money(option.tax) + '</span>' +
+      '<span class="sub">' + sub + '</span></div>';
+  }
+
+  function statusLine(tax) {
+    if (!tax || !tax.status) return '';
+    let text = 'DVLA status: ' + tax.status;
+    if (tax.dueDate) {
+      const [y, m, d] = tax.dueDate.split('-').map(Number);
+      text += ', due ' + new Date(Date.UTC(y, m - 1, d))
+        .toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    }
+    return '<p class="status">' + esc(text) + '</p>';
+  }
+
+  async function lookUp(plate) {
+    go.disabled = true;
+    message('Looking up ' + plate + '…');
+    try {
+      // Prices first: this is the call that buys the lookup. The vehicle
+      // name then comes from the same cached answer at no extra cost.
+      const pricing = await get('/pricing/options?reg=' + encodeURIComponent(plate));
+      const vehicle = await get('/vehicles/lookup?reg=' + encodeURIComponent(plate)).catch(() => null);
+
+      const byId = Object.fromEntries((pricing.options || []).map(o => [o.id, o]));
+      const name = vehicle && (vehicle.model || vehicle.make);
+
+      result.innerHTML =
+        '<div class="result">' +
+          (name ? '<p class="vehicle">' + esc(name) + '</p>' : '') +
+          statusLine(pricing.tax) +
+          '<div class="prices">' + TERMS.map(([id, title]) => card(title, byId[id])).join('') + '</div>' +
+        '</div>';
+    } catch (e) {
+      message(e.message, true);
+    } finally {
+      go.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const plate = reg.value.toUpperCase().replace(/\s+/g, '');
+    if (!plate) {
+      message('Enter a number plate.');
+      return;
+    }
+    lookUp(plate);
+  });
+
+  message(location.protocol === 'file:'
+    ? 'Open this page from a web address, not as a file, or the backend will refuse it.'
+    : 'Enter a number plate to see its vehicle tax.');
+})();
+</script>
+</body>
+</html>

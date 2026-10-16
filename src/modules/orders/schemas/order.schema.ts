@@ -5,6 +5,8 @@ import { BankField, BankReviewActor, BankReviewStatus } from '../../../common/en
 import {
   CommunicationMethod,
   InvoiceStatus,
+  OrderFlagResolution,
+  OrderFlagSource,
   OrderStatus,
   OrderType,
 } from '../../../common/enums/order.enum';
@@ -142,6 +144,32 @@ export class InvoiceFile {
 const InvoiceFileSchema = SchemaFactory.createForClass(InvoiceFile);
 
 /**
+ * What became of the email that carries the invoice to the customer.
+ *
+ * Kept apart from `invoiceStatus`, which says the supplier's work is
+ * done. Whether a message then left the mail server is a different
+ * fact, and one that can be false: this is where it is written down, so
+ * an order never claims an email nobody sent.
+ */
+@Schema({ _id: false })
+export class InvoiceEmailRecord {
+  @Prop({ type: String, enum: ['sent', 'failed'], required: true })
+  status!: 'sent' | 'failed';
+
+  /** The address it was sent to, or would have been. */
+  @Prop({ default: '' })
+  to!: string;
+
+  @Prop({ type: Date, required: true })
+  at!: Date;
+
+  /** Why it did not go, in a sentence an admin can act on. Null once it has. */
+  @Prop({ type: String, default: null })
+  reason!: string | null;
+}
+const InvoiceEmailRecordSchema = SchemaFactory.createForClass(InvoiceEmailRecord);
+
+/**
  * The DVLA V62 application, shaped to match the printed form. Built
  * when the customer submits it, so the admin prints exactly what was
  * declared rather than a re-derivation that may since have drifted.
@@ -178,8 +206,24 @@ export class V62Submission {
   @Prop({ default: '' })
   keeperName!: string;
 
+  /** "40 California Road, Carlisle" — the address on one line, for a screen. */
   @Prop({ default: '' })
   keeperAddress!: string;
+
+  /*
+   * The same address in the parts the form asks for separately: the
+   * house number and street, a second line, the post town. Empty on an
+   * order placed before these were collected, which has only the line
+   * above.
+   */
+  @Prop({ default: '' })
+  keeperAddress1!: string;
+
+  @Prop({ default: '' })
+  keeperAddress2!: string;
+
+  @Prop({ default: '' })
+  keeperCity!: string;
 
   @Prop({ default: '' })
   keeperPostcode!: string;
@@ -189,6 +233,10 @@ export class V62Submission {
 
   @Prop({ default: '' })
   keeperEmail!: string;
+
+  /** DD/MM/YYYY, as the customer gave it — "when did you get the vehicle?" */
+  @Prop({ default: '' })
+  dateAcquired!: string;
 
   @Prop({ default: '' })
   declarationDate!: string;
@@ -228,7 +276,7 @@ export class BankReviewNote {
   @Prop({ type: String, enum: Object.values(BankReviewActor), required: true })
   by!: BankReviewActor;
 
-  /** What the supplier flagged. Empty on the customer's reply. */
+  /** On a supplier's note, what they flagged. On the customer's reply, what they changed. */
   @Prop({ type: [String], enum: Object.values(BankField), default: [] })
   fields!: BankField[];
 
@@ -255,6 +303,44 @@ export class BankReview {
   notes!: BankReviewNote[];
 }
 const BankReviewSchema = SchemaFactory.createForClass(BankReview);
+
+/**
+ * A hand up on an order: "an admin needs to look at this one". Raised
+ * by the supplier holding it, or by the system when a mandate has been
+ * sent back too many times. One at a time — an order is flagged or it
+ * is not — and it stands until an admin answers it: by sending the order
+ * back to the supplier, completing it, or cancelling it. The answered
+ * flag is kept until the next one replaces it, so the supplier can read
+ * what the admin said.
+ */
+@Schema({ _id: false })
+export class OrderFlag {
+  @Prop({ type: Date, default: () => new Date() })
+  at!: Date;
+
+  @Prop({ type: String, enum: Object.values(OrderFlagSource), required: true })
+  source!: OrderFlagSource;
+
+  /** Why, in the words of whoever raised it. Optional — a supplier may flag without comment. */
+  @Prop({ default: '' })
+  reason!: string;
+
+  /** The supplier's user who raised it. Null when the system did. */
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', default: null })
+  by!: Types.ObjectId | null;
+
+  /** Null while the flag is standing. */
+  @Prop({ type: Date, default: null })
+  resolvedAt!: Date | null;
+
+  @Prop({ type: String, enum: [...Object.values(OrderFlagResolution), null], default: null })
+  resolution!: OrderFlagResolution | null;
+
+  /** The admin's comment to the supplier. Only set when the order was sent back. */
+  @Prop({ default: '' })
+  response!: string;
+}
+const OrderFlagSchema = SchemaFactory.createForClass(OrderFlag);
 
 /**
  * The audit trail. Appended as things happen rather than derived at
@@ -378,6 +464,10 @@ export class Order {
   @Prop({ type: InvoiceFileSchema, default: null })
   invoice!: InvoiceFile | null;
 
+  /** Null until an email has been attempted — and always null on a WhatsApp order. */
+  @Prop({ type: InvoiceEmailRecordSchema, default: null })
+  invoiceEmail!: InvoiceEmailRecord | null;
+
   @Prop({
     type: String,
     enum: Object.values(CommunicationMethod),
@@ -406,6 +496,12 @@ export class Order {
 
   @Prop({ type: BankReviewSchema, default: null })
   bankReview!: BankReview | null;
+
+  /* --- flagged to an admin ---------------------------------------------- */
+
+  /** Null on almost every order. Kept once answered, as the record of what was said. */
+  @Prop({ type: OrderFlagSchema, default: null })
+  flag!: OrderFlag | null;
 
   /* --- timestamps, one per lifecycle step ------------------------------- */
 
@@ -443,6 +539,9 @@ export class Order {
   /** Set when an admin sent it over WhatsApp. Never set on email orders. */
   @Prop({ type: Date, default: null })
   deliveredAt!: Date | null;
+
+  @Prop({ type: Date, default: null })
+  cancelledAt!: Date | null;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Supplier', default: null })
   reassignedFrom!: Types.ObjectId | null;

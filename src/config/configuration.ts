@@ -20,6 +20,10 @@ export interface AppConfig {
   responseTimeoutMs: number;
   serviceFee: number;
   v62Fee: number;
+  /** The flat price of a "Reg > VIN" lookup. No service fee is added to it. */
+  vinFee: number;
+  /** The flat price of a pair of number plates, delivered. No service fee is added to it. */
+  platesFee: number;
   uploadDir: string;
   maxUploadBytes: number;
   cloudinary: {
@@ -33,6 +37,30 @@ export interface AppConfig {
     secretKey: string;
     webhookSecret: string;
     publishableKey: string;
+  };
+  /**
+   * Push notifications, through Firebase Cloud Messaging. The whole
+   * feature is switched on by one file being present: a missing or
+   * unreadable credentials file leaves push off and the app otherwise
+   * untouched, which is what a developer without the key wants.
+   */
+  push: {
+    /** A Firebase service-account JSON, relative to the project root. */
+    credentialsFile: string;
+  };
+  /**
+   * SMTP, for the invoice a customer is emailed when the supplier
+   * uploads it. Optional in the same way push is: with no host or
+   * credentials nothing is sent, and the order's timeline says so
+   * rather than claiming an email that never left.
+   */
+  mail: {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    /** `TaxMyMotor <billing@example.co.uk>` — what the customer sees it came from. */
+    from: string;
   };
   /**
    * Vehicle Data Global's R2 lookup. Pay-as-you-go and billed per
@@ -72,6 +100,16 @@ export interface AppConfig {
     minCallIntervalMs: number;
     requestTimeoutMs: number;
   };
+  /**
+   * "Find address" on the V62 screen. Optional in the same way push and
+   * mail are: with no URL the search answers that it is unavailable and
+   * the customer types their address instead.
+   */
+  addressLookup: {
+    /** Answers `GET <url>?postcode=` — the TaxMyMotor website's own /api/address-lookup. */
+    url: string;
+    timeoutMs: number;
+  };
 }
 
 const toList = (value?: string) =>
@@ -79,6 +117,18 @@ const toList = (value?: string) =>
     .split(',')
     .map(part => part.trim())
     .filter(Boolean);
+
+/**
+ * The sender. MAIL_FROM when it is set; otherwise the SMTP account
+ * itself, when that is an address — which it is on most hosts, and
+ * saves a setting that would only repeat it.
+ */
+const mailFrom = (explicit?: string, username?: string): string => {
+  if (explicit?.trim()) {
+    return explicit.trim();
+  }
+  return username?.includes('@') ? 'TaxMyMotor <' + username.trim() + '>' : '';
+};
 
 export default (): AppConfig => ({
   env: process.env.NODE_ENV ?? 'development',
@@ -97,6 +147,8 @@ export default (): AppConfig => ({
   responseTimeoutMs: parseInt(process.env.RESPONSE_TIMEOUT_MS ?? '420000', 10),
   serviceFee: Number(process.env.SERVICE_FEE ?? 40),
   v62Fee: Number(process.env.V62_FEE ?? 40),
+  vinFee: Number(process.env.VIN_FEE ?? 0.99),
+  platesFee: Number(process.env.PLATES_FEE ?? 20),
   uploadDir: process.env.UPLOAD_DIR ?? './uploads',
   maxUploadBytes: parseInt(process.env.MAX_UPLOAD_BYTES ?? '10485760', 10),
   /*
@@ -116,6 +168,16 @@ export default (): AppConfig => ({
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
   },
+  push: {
+    credentialsFile: process.env.FIREBASE_CREDENTIALS ?? './firebaseintegeration.json',
+  },
+  mail: {
+    host: process.env.SMTP_HOST ?? '',
+    port: parseInt(process.env.SMTP_PORT ?? '465', 10),
+    username: process.env.SMTP_USERNAME ?? '',
+    password: process.env.SMTP_PASSWORD ?? '',
+    from: mailFrom(process.env.MAIL_FROM, process.env.SMTP_USERNAME),
+  },
   vehicleData: {
     apiKey: process.env.VEHICLE_DATA_API_KEY ?? '',
     baseUrl: process.env.VEHICLE_DATA_BASE_URL ?? 'https://uk.api.vehicledataglobal.com',
@@ -127,5 +189,9 @@ export default (): AppConfig => ({
     dailyCallLimit: parseInt(process.env.VEHICLE_DATA_DAILY_LIMIT ?? '200', 10),
     minCallIntervalMs: parseInt(process.env.VEHICLE_DATA_MIN_INTERVAL_MS ?? '1100', 10),
     requestTimeoutMs: parseInt(process.env.VEHICLE_DATA_TIMEOUT_MS ?? '10000', 10),
+  },
+  addressLookup: {
+    url: process.env.ADDRESS_LOOKUP_URL ?? '',
+    timeoutMs: parseInt(process.env.ADDRESS_LOOKUP_TIMEOUT_MS ?? '8000', 10),
   },
 });

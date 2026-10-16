@@ -1,10 +1,9 @@
 /**
  * The order vocabulary, shared by the three front ends.
  *
- * The status is DERIVED from the lifecycle timestamps and the invoice
- * status rather than stored as an independent field, so a record can
- * never contradict its own history. `OrdersService.deriveStatus` is the
- * one place that mapping lives.
+ * The status is moved only by OrdersService, alongside the lifecycle
+ * timestamp for the same step, so a record never contradicts its own
+ * history.
  */
 export enum OrderStatus {
   /** No active supplier holds this order type, so nobody was assigned. */
@@ -19,6 +18,8 @@ export enum OrderStatus {
   InvoiceReady = 'invoice_ready',
   /** Delivered to the customer. Terminal. */
   InvoiceSent = 'invoice_sent',
+  /** Called off by an admin after it was flagged. Terminal. */
+  Cancelled = 'cancelled',
 }
 
 /** Statuses that still need somebody to act. */
@@ -29,6 +30,34 @@ export const OPEN_STATUSES: OrderStatus[] = [
   OrderStatus.InvoiceUploaded,
   OrderStatus.InvoiceReady,
 ];
+
+/** Statuses nobody will act on again. */
+export const CLOSED_STATUSES: OrderStatus[] = [OrderStatus.InvoiceSent, OrderStatus.Cancelled];
+
+/**
+ * Who put the flag on an order. A supplier raises one by hand, on any
+ * order they cannot get through on their own; the system raises one for
+ * them when a Direct Debit mandate has gone round the review loop too
+ * many times (see BANK_ROUNDS_BEFORE_FLAG).
+ */
+export enum OrderFlagSource {
+  Supplier = 'supplier',
+  System = 'system',
+}
+
+/**
+ * How a flag ended. Three are an admin's answer — sent back: the order
+ * is the supplier's again, with the admin's comment; completed: the
+ * admin closed it as done; cancelled: the admin called it off. The
+ * fourth is the supplier's own: they uploaded the invoice after all,
+ * which finishes their part and leaves nothing for an admin to decide.
+ */
+export enum OrderFlagResolution {
+  SentBack = 'sent_back',
+  Completed = 'completed',
+  Cancelled = 'cancelled',
+  Invoiced = 'invoiced',
+}
 
 export enum InvoiceStatus {
   Pending = 'pending',

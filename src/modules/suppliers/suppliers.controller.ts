@@ -150,7 +150,7 @@ export class SuppliersController {
     const supplier = await this.suppliers.findById(id);
     const password = dto.password ?? randomPassword();
     const user = await this.users.create({
-      name: dto.name || supplier.contact || supplier.name,
+      name: dto.name || supplier.name,
       email: dto.email,
       password,
       role: Role.Supplier,

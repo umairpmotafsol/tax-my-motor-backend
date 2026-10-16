@@ -5,6 +5,15 @@
  * with that field named, and returns when they have fixed it — as many
  * times as it takes.
  */
+
+/**
+ * How many times a supplier can send the same mandate back before it
+ * stops being a correction and becomes something an admin should see.
+ * The loop itself is not cut off — the send-back after this many still
+ * reaches the customer — but the order is flagged alongside it.
+ */
+export const BANK_ROUNDS_BEFORE_FLAG = 3;
+
 export enum BankField {
   AccountHolder = 'accountHolder',
   AccountNumber = 'accountNumber',

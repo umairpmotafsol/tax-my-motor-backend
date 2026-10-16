@@ -29,6 +29,8 @@ export interface VehicleLookup {
   vin: string;
   /** Doubles as the DVLA taxation class on the V62. */
   taxClass: string;
+  /** Null when no source gave one. */
+  year: number | null;
   /** False when this came from the fallback rather than the register. */
   known: boolean;
 }
@@ -173,7 +175,9 @@ export class VehiclesService {
    * the tax check uses — so entering a plate and pricing it cost one
    * call between them, not one each. The local register is consulted
    * only when the provider cannot answer, and the deterministic
-   * fallback only in development, where there is no key to answer with.
+   * fallback only outside production. In production a plate the
+   * provider has no record of is a 404, and a provider that could not
+   * answer is a 503, never a 404.
    *
    * `known` is the honest part: true only when the answer came from the
    * provider or a curated register entry, false when it is a stand-in.
@@ -184,6 +188,8 @@ export class VehiclesService {
     }
     const bare = normaliseReg(reg);
 
+    /** Why the provider gave no vehicle, when it was the provider that failed. */
+    let failure: VehicleDataError | null = null;
     try {
       const resolved = await this.resolve(bare);
       const identity = resolved.vehicle;
@@ -196,12 +202,14 @@ export class VehiclesService {
           identity.vin ?? '',
           identity.fuelType ?? '',
           true,
+          identity.yearOfManufacture ?? resolved.details.yearOfManufacture,
         );
       }
     } catch (err) {
       if (!(err instanceof VehicleDataError)) {
         throw err;
       }
+      failure = err;
       this.logger.warn('Lookup for ' + bare + ' fell back (' + err.reason + ').');
     }
 
@@ -210,10 +218,20 @@ export class VehiclesService {
       return this.shape(bare, found.make, found.variant, found.colour, found.vin, found.fuelType, true);
     }
 
-    // No provider answer and nothing on file. In production that is a
-    // real failure and saying so beats inventing a car the customer
-    // would then be quoted and taxed against.
+    // No provider answer and nothing on file. Outside production the
+    // registration step does not gate on that: a stand-in is served so
+    // the funnel reaches pricing, which asks the provider itself. Whether
+    // an unrecognised plate should stop the customer here is undecided.
     if (this.isProduction) {
+      // "Not found" is said only when the provider looked and found
+      // nothing. One that could not or would not answer — down, out of
+      // budget, a sandbox key asked about a plate outside its test set —
+      // has said nothing about whether the vehicle exists.
+      if (failure && failure.reason !== 'not-found') {
+        throw new ServiceUnavailableException(
+          'We could not check that registration just now. Please try again shortly.',
+        );
+      }
       throw new NotFoundException('We could not find a vehicle with that registration.');
     }
 
@@ -228,6 +246,56 @@ export class VehiclesService {
       fallback.fuelType,
       false,
     );
+  }
+
+  /**
+   * The same lookup, for an order that carries a V62.
+   *
+   * A plate the Tax package priced is deliberately not described any
+   * further — one bill, with model, colour and VIN left blank. That is
+   * right for a quote and wrong for a V62, which DVLA returns unprocessed
+   * without a VIN. So when the form is actually going to be filed, the
+   * identity package is asked this once and its answer kept beside the
+   * tax row: one more bill, on V62 orders only, and never twice for the
+   * same plate.
+   *
+   * Best effort, like the package itself: with none configured, or no
+   * answer, the order goes ahead on what is known and the admin
+   * completes the form by hand.
+   */
+  async lookupForV62(reg: string): Promise<VehicleLookup> {
+    const known = await this.lookup(reg);
+    if (known.vin && known.colour) {
+      return known;
+    }
+    return (await this.addIdentity(normaliseReg(reg))) ? this.lookup(reg) : known;
+  }
+
+  /** True when the cached row gained an identity it did not have. */
+  private async addIdentity(bare: string): Promise<boolean> {
+    const cached = await this.taxCacheModel.findOne({ reg: bare }).lean();
+    /* No row means the plate never resolved; a row with an identity has nothing more to learn. */
+    if (!cached?.raw || cached.detailsRaw) {
+      return false;
+    }
+    const identity = await this.vehicleData.fetchDetails(bare);
+    if (!identity) {
+      return false;
+    }
+    /*
+     * Only the identity is rewritten. The price on this row is the one
+     * the customer was quoted a moment ago, and stays exactly as it is.
+     */
+    await this.taxCacheModel.updateOne(
+      { reg: bare },
+      {
+        $set: {
+          detailsRaw: identity.payload,
+          vehicle: this.mapVehicleResponse(cached.raw as Record<string, unknown>, identity.payload),
+        },
+      },
+    );
+    return true;
   }
 
   /** Adds or refreshes a register entry. */
@@ -659,6 +727,7 @@ export class VehiclesService {
     vin: string,
     fuelType: string,
     known: boolean,
+    year: number | null = null,
   ): VehicleLookup {
     return {
       reg: formatReg(bare),
@@ -668,6 +737,7 @@ export class VehiclesService {
       colour,
       vin,
       taxClass: fuelType,
+      year,
       known,
     };
   }

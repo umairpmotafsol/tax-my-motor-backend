@@ -7,11 +7,8 @@ export function toSupplier(supplier: SupplierDocument) {
   return {
     id: String(supplier._id),
     name: supplier.name,
-    company: supplier.company,
-    contact: supplier.contact,
     email: supplier.email,
     phone: supplier.phone,
-    region: supplier.region,
     status: supplier.status,
     orderTypes: supplier.orderTypes,
     orderTypeLabels: supplier.orderTypes.map(type => ORDER_TYPE_LABEL[type]),
@@ -25,7 +22,6 @@ export function toSupplierProfile(supplier: SupplierDocument) {
   return {
     id: String(supplier._id),
     name: supplier.name,
-    company: supplier.company,
     status: supplier.status,
     orderTypes: supplier.orderTypes,
   };

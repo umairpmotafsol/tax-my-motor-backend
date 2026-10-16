@@ -2,9 +2,11 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { BankReviewService } from '../bank/bank-review.service';
+import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { PushModule } from '../push/push.module';
 import { SuppliersModule } from '../suppliers/suppliers.module';
 import { UsersModule } from '../users/users.module';
 import { VehiclesModule } from '../vehicles/vehicles.module';
@@ -35,6 +37,8 @@ import { SupplierOrdersController } from './supplier-orders.controller';
     PricingModule,
     PaymentsModule,
     NotificationsModule,
+    PushModule,
+    MailModule,
   ],
   controllers: [OrdersController, SupplierOrdersController, AdminOrdersController],
   providers: [OrdersService, BankReviewService, OrdersTasks],

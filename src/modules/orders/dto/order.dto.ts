@@ -46,13 +46,27 @@ export class BankDetailsDto {
 }
 
 /**
- * What the checkout asks for when V62 is added: only, if the applicant
- * is not the person who filled in "Your details", who to put on the
- * form. Everything else DVLA needs is known from the vehicle lookup.
+ * What the checkout asks for when V62 is added: when the vehicle was
+ * acquired, and who goes on the form. The `applicant` fields always
+ * describe that person. With the details the same as the tax details,
+ * their name and contact come from the account, and only what the
+ * account does not hold is sent — a title and a postal address in the
+ * parts the form wants. Everything else DVLA needs is known from the
+ * vehicle lookup.
+ *
+ * Every field is optional here because which ones are needed depends on
+ * `sameAsTaxDetails`; `buildV62Submission` is what insists on them.
  */
 export class V62DataDto {
   @IsBoolean()
   sameAsTaxDetails!: boolean;
+
+  /** DD/MM/YYYY — "If no, when did you get the vehicle?" */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @Transform(trim)
+  dateAcquired?: string;
 
   @IsOptional()
   @IsString()
@@ -86,9 +100,21 @@ export class V62DataDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(200)
+  @MaxLength(120)
   @Transform(trim)
-  applicantAddress?: string;
+  applicantAddress1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  @Transform(trim)
+  applicantAddress2?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  @Transform(trim)
+  applicantCity?: string;
 
   @IsOptional()
   @IsString()
@@ -176,6 +202,33 @@ export class RequestBankChangesDto {
   message!: string;
 }
 
+/** The supplier's hand up. The comment is theirs to add or not. */
+export class FlagOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(trim)
+  reason?: string;
+}
+
+/** An admin handing a flagged order back to its supplier, saying what to do. */
+export class SendBackOrderDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Add a comment for the supplier.' })
+  @MaxLength(500)
+  @Transform(trim)
+  comment!: string;
+}
+
+/** An admin calling a flagged order off. The reason is theirs to give or not. */
+export class CancelOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(trim)
+  reason?: string;
+}
+
 export class ReassignOrderDto {
   @IsString()
   @IsNotEmpty()
@@ -205,4 +258,10 @@ export class ListOrdersDto extends PaginationDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   today?: boolean;
+
+  /** Only orders with a flag standing — the admin's Flagged tab. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  flagged?: boolean;
 }

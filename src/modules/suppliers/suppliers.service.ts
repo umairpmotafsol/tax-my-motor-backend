@@ -31,11 +31,9 @@ export class SuppliersService {
   }
 
   /** Cheap name lookup for serializing a list of orders in one pass. */
-  async nameMap(): Promise<Map<string, { name: string; company: string }>> {
-    const suppliers = await this.supplierModel.find().select('name company');
-    return new Map(
-      suppliers.map(s => [String(s._id), { name: s.name, company: s.company }]),
-    );
+  async nameMap(): Promise<Map<string, { name: string }>> {
+    const suppliers = await this.supplierModel.find().select('name');
+    return new Map(suppliers.map(s => [String(s._id), { name: s.name }]));
   }
 
   /* -------------------------------- routing -------------------------------- */
@@ -77,11 +75,8 @@ export class SuppliersService {
   async create(dto: CreateSupplierDto): Promise<SupplierDocument> {
     const supplier = await this.supplierModel.create({
       name: dto.name,
-      company: dto.company,
-      contact: dto.contact ?? '',
       email: dto.email ?? '',
       phone: dto.phone ?? '',
-      region: dto.region ?? '',
       status: dto.status ?? SupplierStatus.Active,
       orderTypes: [],
       since: new Date(),

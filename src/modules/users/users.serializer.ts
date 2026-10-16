@@ -59,7 +59,7 @@ export interface AdminCustomer {
   lifetimeSpend: number;
   prefersWhatsapp: boolean;
   everRequestedV62: boolean;
-  latestOrder: { id: string; orderNumber: string; status: string; placedAt: string } | null;
+  latestOrder: { id: string; orderNumber: string; reg: string; status: string; placedAt: string } | null;
 }
 
 const EMPTY_STATS: CustomerOrderStats = {

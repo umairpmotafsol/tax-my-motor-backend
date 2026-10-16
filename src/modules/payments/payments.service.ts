@@ -81,6 +81,36 @@ export class PaymentsService {
   }
 
   /**
+   * A PaymentIntent for a fixed price — the Extras, which cost what they
+   * cost whatever the vehicle. `metadata` says what it was raised for,
+   * and is checked again when the purchase is completed.
+   */
+  async createFlatIntent(
+    amountPounds: number,
+    customerId: string,
+    metadata: Record<string, string>,
+  ): Promise<PaymentIntentResult> {
+    const client = this.requireClient();
+    const intent = await client.paymentIntents.create({
+      amount: Math.round(amountPounds * 100),
+      currency: 'gbp',
+      automatic_payment_methods: { enabled: true },
+      metadata: { ...metadata, customerId },
+    });
+
+    if (!intent.client_secret) {
+      throw new ServiceUnavailableException('Could not start a payment. Please try again.');
+    }
+
+    return {
+      clientSecret: intent.client_secret,
+      publishableKey: this.publishableKey,
+      amount: amountPounds,
+      currency: 'gbp',
+    };
+  }
+
+  /**
    * Checked at order placement, not trusted from the client: the intent
    * has to have actually succeeded, for the exact amount quoted, and it
    * has to be this customer's own intent — otherwise anyone could place

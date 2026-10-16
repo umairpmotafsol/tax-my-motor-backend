@@ -98,31 +98,22 @@ export class SeedService implements OnApplicationBootstrap {
     const wanted = [
       {
         name: 'Supplier A',
-        company: 'Northgate Motor Services',
-        contact: 'Ian Brooks',
         email: 'ian@northgate-motors.co.uk',
         phone: '0161 496 0113',
-        region: 'North West',
         status: SupplierStatus.Active,
         orderTypes: [OrderType.Tax6, OrderType.DirectDebit],
       },
       {
         name: 'Supplier B',
-        company: 'Crownway Vehicle Admin',
-        contact: 'Denise Okafor',
         email: 'denise@crownway.co.uk',
         phone: '0121 496 0788',
-        region: 'Midlands',
         status: SupplierStatus.Active,
         orderTypes: [OrderType.Tax12],
       },
       {
         name: 'Supplier C',
-        company: 'Harbour Tax Bureau',
-        contact: 'Marcus Hale',
         email: 'marcus@harbourtax.co.uk',
         phone: '0117 496 0244',
-        region: 'South West',
         status: SupplierStatus.Inactive,
         orderTypes: [],
       },
@@ -163,8 +154,8 @@ export class SeedService implements OnApplicationBootstrap {
     }> = [
       {
         name: 'Alex Morgan',
-        email: 'admin@taxmymotor.co.uk',
-        password: 'admin123',
+        email: 'admintesting890@yopmail.com',
+        password: 'Call@911',
         role: Role.Admin,
       },
       {

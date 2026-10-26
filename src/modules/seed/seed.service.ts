@@ -250,6 +250,7 @@ export class SeedService implements OnApplicationBootstrap {
           accountNumber: '61220945',
           sortCode: '30-96-12',
           dateOfBirth: '02/11/1988',
+          iban: 'GB32LOYD30961261220945',
         },
         bankStatus: BankReviewStatus.Submitted,
       },
@@ -336,6 +337,7 @@ export class SeedService implements OnApplicationBootstrap {
               accountNumber: encryptField(spec.bank.accountNumber),
               sortCode: spec.bank.sortCode,
               dateOfBirth: encryptField(spec.bank.dateOfBirth),
+              iban: encryptField(spec.bank.iban),
             }
           : null,
         bankReview: spec.bank ? { status: spec.bankStatus, flagged: [], notes: [] } : null,

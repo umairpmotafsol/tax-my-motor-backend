@@ -79,6 +79,7 @@ const GOOD_BANK = {
   accountNumber: '12345678',
   sortCode: '12-34-56',
   dateOfBirth: '04/07/1990',
+  iban: 'GB03 NWBK 1234 5612 3456 78',
 };
 
 function build() {
@@ -185,6 +186,7 @@ function orderOf(type: OrderType, over: Record<string, unknown> = {}): OrderDocu
           accountNumber: encryptField('12345670'),
           sortCode: '12-34-56',
           dateOfBirth: encryptField('04/07/1990'),
+          iban: encryptField('GB03NWBK12345612345678'),
         }
       : null,
     bankReview: directDebit ? { status: BankReviewStatus.Submitted, flagged: [], notes: [] } : null,

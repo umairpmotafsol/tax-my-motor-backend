@@ -10,7 +10,7 @@ import {
 import { NotificationType } from '../../common/enums/notification.enum';
 import { InvoiceStatus, OrderFlagSource, OrderType } from '../../common/enums/order.enum';
 import { Role } from '../../common/enums/role.enum';
-import { bankProblems } from '../../common/utils/bank.util';
+import { bankProblems, normaliseIban } from '../../common/utils/bank.util';
 import { decryptField, encryptField } from '../../common/utils/crypto.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -166,8 +166,10 @@ export class BankReviewService {
       [BankField.AccountNumber]: decryptField(order.bank?.accountNumber ?? ''),
       [BankField.SortCode]: order.bank?.sortCode ?? '',
       [BankField.DateOfBirth]: decryptField(order.bank?.dateOfBirth ?? ''),
+      [BankField.Iban]: decryptField(order.bank?.iban ?? ''),
     };
-    const changed = BANK_FIELDS.filter(field => previous[field] !== bank[field]);
+    const sent: Record<BankField, string> = { ...bank, iban: normaliseIban(bank.iban) };
+    const changed = BANK_FIELDS.filter(field => previous[field] !== sent[field]);
 
     const at = new Date();
     order.bank = {
@@ -175,6 +177,7 @@ export class BankReviewService {
       accountNumber: encryptField(bank.accountNumber),
       sortCode: bank.sortCode,
       dateOfBirth: encryptField(bank.dateOfBirth),
+      iban: encryptField(sent.iban),
     };
     order.bankReview.status = BankReviewStatus.Submitted;
     order.bankReview.flagged = [];

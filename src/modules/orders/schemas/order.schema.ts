@@ -247,7 +247,7 @@ export class V62Submission {
 const V62SubmissionSchema = SchemaFactory.createForClass(V62Submission);
 
 /**
- * The mandate. `accountNumber` and `dateOfBirth` are stored encrypted
+ * The mandate. `accountNumber`, `dateOfBirth` and `iban` are stored encrypted
  * (see crypto.util) and decrypted only for the supplier reviewing them
  * and the customer they belong to.
  */
@@ -264,6 +264,10 @@ export class BankDetails {
 
   @Prop({ required: true })
   dateOfBirth!: string;
+
+  /** Blank on orders placed before the IBAN was asked for. */
+  @Prop({ default: '' })
+  iban!: string;
 }
 const BankDetailsSchema = SchemaFactory.createForClass(BankDetails);
 

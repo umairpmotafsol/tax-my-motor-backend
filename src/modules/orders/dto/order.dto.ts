@@ -43,6 +43,13 @@ export class BankDetailsDto {
   @IsNotEmpty()
   @Transform(trim)
   dateOfBirth!: string;
+
+  /** Spaces allowed — "GB29 NWBK 6016 1331 9268 19" is how it is printed. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(42)
+  @Transform(trim)
+  iban!: string;
 }
 
 /**

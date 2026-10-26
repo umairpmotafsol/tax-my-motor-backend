@@ -127,6 +127,9 @@ function bankDetails(order: OrderDocument, full: boolean) {
       : maskAccountNumber(decryptField(order.bank.accountNumber)),
     sortCode: order.bank.sortCode,
     dateOfBirth: full ? decryptField(order.bank.dateOfBirth) : '••/••/••••',
+    iban: full
+      ? decryptField(order.bank.iban ?? '')
+      : maskAccountNumber(decryptField(order.bank.iban ?? '')),
   };
 }
 

@@ -27,7 +27,7 @@ import {
   OrderType,
 } from '../../common/enums/order.enum';
 import { Role } from '../../common/enums/role.enum';
-import { bankProblems } from '../../common/utils/bank.util';
+import { bankProblems, normaliseIban } from '../../common/utils/bank.util';
 import { encryptField } from '../../common/utils/crypto.util';
 import { formatReg, gbp, normaliseReg, startOfDay } from '../../common/utils/format.util';
 import { MailService } from '../mail/mail.service';
@@ -208,6 +208,7 @@ export class OrdersService {
               accountNumber: encryptField(dto.bank.accountNumber),
               sortCode: dto.bank.sortCode,
               dateOfBirth: encryptField(dto.bank.dateOfBirth),
+              iban: encryptField(normaliseIban(dto.bank.iban)),
             }
           : null,
       bankReview:

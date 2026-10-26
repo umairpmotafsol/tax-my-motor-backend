@@ -48,6 +48,33 @@ export function ageFrom(dob: Date, on: Date = new Date()): number {
   return beforeBirthday ? years - 1 : years;
 }
 
+/** "gb29 nwbk 6016..." -> "GB29NWBK6016...", the form it is checked and stored in. */
+export function normaliseIban(value: string): string {
+  return (value ?? '').replace(/\s+/g, '').toUpperCase();
+}
+
+/**
+ * The ISO 13616 check: two letters, two check digits, then the account,
+ * and the whole thing mod 97 must be 1 once the first four characters
+ * move to the end and letters become numbers (A = 10 … Z = 35). The app
+ * also asks openiban.com before letting the customer on; this is the
+ * same sum done offline, so a hand-built request cannot skip it.
+ */
+export function ibanValid(value: string): boolean {
+  const iban = normaliseIban(value);
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(iban)) {
+    return false;
+  }
+  const digits = (iban.slice(4) + iban.slice(0, 4)).replace(/[A-Z]/g, letter =>
+    String(letter.charCodeAt(0) - 55),
+  );
+  let remainder = 0;
+  for (const digit of digits) {
+    remainder = (remainder * 10 + Number(digit)) % 97;
+  }
+  return remainder === 1;
+}
+
 export function bankFieldValid(field: BankField, value: string): boolean {
   const trimmed = (value ?? '').trim();
   switch (field) {
@@ -62,6 +89,8 @@ export function bankFieldValid(field: BankField, value: string): boolean {
       // A Direct Debit mandate has to be signed by an adult.
       return !!dob && ageFrom(dob) >= 18 && ageFrom(dob) < 120;
     }
+    case BankField.Iban:
+      return ibanValid(trimmed);
     default:
       return false;
   }

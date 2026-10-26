@@ -19,6 +19,7 @@ export enum BankField {
   AccountNumber = 'accountNumber',
   SortCode = 'sortCode',
   DateOfBirth = 'dateOfBirth',
+  Iban = 'iban',
 }
 
 export const BANK_FIELDS: BankField[] = [
@@ -26,6 +27,7 @@ export const BANK_FIELDS: BankField[] = [
   BankField.AccountNumber,
   BankField.SortCode,
   BankField.DateOfBirth,
+  BankField.Iban,
 ];
 
 export const BANK_FIELD_LABEL: Record<BankField, string> = {
@@ -33,6 +35,7 @@ export const BANK_FIELD_LABEL: Record<BankField, string> = {
   [BankField.AccountNumber]: 'Account number',
   [BankField.SortCode]: 'Sort code',
   [BankField.DateOfBirth]: 'Date of birth',
+  [BankField.Iban]: 'IBAN',
 };
 
 export enum BankReviewStatus {

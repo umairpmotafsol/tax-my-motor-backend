@@ -134,7 +134,12 @@ export default (): AppConfig => ({
   env: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '4000', 10),
   apiPrefix: process.env.API_PREFIX ?? 'api',
-  corsOrigins: toList(process.env.CORS_ORIGINS),
+  /*
+   * A browser's Origin header never ends in "/", and cors compares origins
+   * as exact strings — so a URL pasted with a trailing slash would silently
+   * match nothing.
+   */
+  corsOrigins: toList(process.env.CORS_ORIGINS).map(origin => origin.replace(/\/+$/, '')),
   databaseUri: process.env.DATABASE ?? '',
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET ?? '',

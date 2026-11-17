@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Res,
+  ServiceUnavailableException,
   StreamableFile,
   UploadedFile,
   UseInterceptors,
@@ -23,6 +24,8 @@ import { Role } from '../../common/enums/role.enum';
 import { toSupplierOrder } from '../orders/orders.serializer';
 import { OrdersService } from '../orders/orders.service';
 import { InvoicesService } from './invoices.service';
+import { ReceiptOcrService } from './receipt-ocr.service';
+import { checkReceipt } from './receipt-vrm';
 
 /** Photographs only. A PDF would be a different flow with a different viewer. */
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp'];
@@ -33,6 +36,7 @@ export class InvoicesController {
   constructor(
     private readonly orders: OrdersService,
     private readonly invoices: InvoicesService,
+    private readonly ocr: ReceiptOcrService,
     private readonly config: ConfigService,
   ) {}
 
@@ -63,6 +67,50 @@ export class InvoicesController {
 
     const updated = await this.orders.attachInvoice(order, stored, user.userId);
     return toSupplierOrder(updated);
+  }
+
+  /**
+   * Reads the registration off a photographed receipt and says whether it
+   * is this order's vehicle — called by the app before it lets the
+   * supplier submit, so a receipt for the wrong car is caught at the
+   * camera rather than after the order is closed.
+   *
+   * Nothing is stored and the order is not touched. The answer is a
+   * verdict, not an error: a receipt for another vehicle is an ordinary
+   * outcome and the app turns it into a message. Only a check that could
+   * not run at all (503) is an error.
+   */
+  @Roles(Role.Supplier)
+  @Post(':orderId/verify')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Check that a receipt photo is for the order vehicle' })
+  async verify(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Please attach the receipt photo.');
+    }
+    if (!ALLOWED_MIME.includes(file.mimetype)) {
+      throw new BadRequestException('The receipt has to be a photo.');
+    }
+
+    /* Same scoping as the upload: only your own order's registration is ever compared. */
+    const order = await this.orders.findScoped(orderId, user);
+
+    let text: string;
+    try {
+      text = await this.ocr.readText(file.buffer);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+      /* The reader started but could not make sense of the image: the photo's the problem. */
+      text = '';
+    }
+    return { ...checkReceipt(text, order.reg), expected: order.reg };
   }
 
   /**

@@ -6,6 +6,7 @@ import { memoryStorage } from 'multer';
 import { OrdersModule } from '../orders/orders.module';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
+import { ReceiptOcrService } from './receipt-ocr.service';
 
 /**
  * Uploads are buffered in memory rather than written straight to disk,
@@ -29,7 +30,7 @@ import { InvoicesService } from './invoices.service';
     }),
   ],
   controllers: [InvoicesController],
-  providers: [InvoicesService],
+  providers: [InvoicesService, ReceiptOcrService],
   exports: [InvoicesService],
 })
 export class InvoicesModule {}

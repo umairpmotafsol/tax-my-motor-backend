@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
+    "heroku-postbuild": "npm run build && node scripts/prune-onnx-binaries.js",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -19,6 +20,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@gutenye/ocr-node": "^1.4.9",
     "@nestjs/common": "^11.0.12",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.12",
@@ -32,7 +34,6 @@
     "@nestjs/swagger": "^11.1.0",
     "@nestjs/throttler": "^6.4.0",
     "@nestjs/websockets": "^11.0.12",
-    "@tesseract.js-data/eng": "^1.0.0",
     "bcryptjs": "^3.0.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
@@ -49,9 +50,9 @@
     "pdf-lib": "^1.17.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "sharp": "0.34.5",
     "socket.io": "^4.8.1",
-    "stripe": "^22.6.2",
-    "tesseract.js": "^5.1.1"
+    "stripe": "^22.6.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.5",

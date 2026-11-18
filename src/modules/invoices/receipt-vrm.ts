@@ -3,11 +3,12 @@
  * deciding whether it is the vehicle the order is for.
  *
  * The receipt prints it on its own line — "VRM: RJ63HXD" — so that label
- * is what we look for first. OCR is not exact, though. On the receipt this
- * was built from, Tesseract reads the 6 in RJ63HXD as a B, and it does
- * that sort of thing reliably with characters that look alike. A plain
- * string comparison would reject the right receipt, so the comparison
- * treats look-alike characters as equal. The price of that is a receipt
+ * is what we look for first. OCR is not exact, though: on the receipt this
+ * was built from, Tesseract read the 6 in RJ63HXD as a B (PaddleOCR, the
+ * engine now in use, gets it right). Any engine will now and then swap
+ * characters that look alike, and a plain string comparison would reject
+ * the right receipt, so the comparison treats look-alike characters as
+ * equal — a safety net that costs nothing when the reading is clean. The price of that is a receipt
  * for another car that differs from this one only by look-alikes would
  * pass; that is a far smaller risk than turning away good receipts, and
  * the pairs are kept deliberately few.

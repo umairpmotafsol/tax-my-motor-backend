@@ -20,6 +20,16 @@ const REAL_OCR = [
   'Documents retained and sent to DVLA: |',
 ].join('\n');
 
+/**
+ * What PaddleOCR (the engine now in use) returns for the same receipt: the
+ * registration comes out right, with no space after the label in one run.
+ */
+const PADDLE_OCR = [
+  'Licence Period:12 Months',
+  'VRM: RJ63HXD',
+  'Documents retained and sent to DVLA:',
+].join('\n');
+
 describe('normaliseVrm', () => {
   it('drops spaces and punctuation and upper-cases', () => {
     expect(normaliseVrm(' rj63 hxd. ')).toBe('RJ63HXD');
@@ -56,6 +66,12 @@ describe('vrmsMatch', () => {
 describe('checkReceipt', () => {
   it('matches the real receipt, in spite of 6 being read as B', () => {
     expect(checkReceipt(REAL_OCR, 'RJ63 HXD')).toEqual({ status: 'match', vrm: 'RJ63HXD' });
+  });
+
+  it('matches the PaddleOCR reading of the same receipt, and names the plate it read for the wrong order', () => {
+    expect(checkReceipt(PADDLE_OCR, 'RJ63 HXD')).toEqual({ status: 'match', vrm: 'RJ63HXD' });
+    expect(checkReceipt(PADDLE_OCR, 'AB12 CDE')).toEqual({ status: 'mismatch', vrm: 'RJ63HXD' });
+    expect(checkReceipt('VRM:RJ63HXD', 'RJ63 HXD').status).toBe('match');
   });
 
   it('matches when the label is misread too', () => {

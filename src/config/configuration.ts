@@ -47,6 +47,13 @@ export interface AppConfig {
   push: {
     /** A Firebase service-account JSON, relative to the project root. */
     credentialsFile: string;
+    /**
+     * The same service-account key as the file, passed inline - raw JSON,
+     * or that JSON base64-encoded. For hosts with no persistent disk
+     * (Heroku), where the file cannot be kept because it must stay out of
+     * git. Wins over the file when both are set.
+     */
+    credentialsJson: string;
   };
   /**
    * SMTP, for the invoice a customer is emailed when the supplier
@@ -175,6 +182,7 @@ export default (): AppConfig => ({
   },
   push: {
     credentialsFile: process.env.FIREBASE_CREDENTIALS ?? './firebaseintegeration.json',
+    credentialsJson: process.env.FIREBASE_CREDENTIALS_JSON ?? '',
   },
   mail: {
     host: process.env.SMTP_HOST ?? '',

@@ -99,6 +99,7 @@ function build() {
     enabled: true,
     toAdmins: jest.fn(async (..._a: unknown[]) => 1),
     toSupplier: jest.fn(async (..._a: unknown[]) => 1),
+    toCustomer: jest.fn(async (..._a: unknown[]) => 1),
   };
   const suppliers = { findById: jest.fn(async () => ({ name: 'Northgate Motors' })) };
   const config = {
@@ -249,6 +250,11 @@ describe('the Direct Debit loop', () => {
     const { bankReview, push } = build();
     const order = orderOf(OrderType.DirectDebit);
     await bankReview.requestChanges(order, [BankField.AccountNumber], 'Does not match.');
+    /* The customer is told it came back, in a message only they can act on. */
+    expect(push.toCustomer.mock.calls.at(-1)).toMatchObject([
+      order.customer,
+      { title: 'Your bank details need a fix', data: { kind: 'customer.bank_changes' } },
+    ]);
 
     /* They fixed the number that was asked for, and the sort code while they were there. */
     await bankReview.resubmit(order, { ...GOOD_BANK, sortCode: '65-43-21' });
@@ -304,13 +310,18 @@ describe('the Direct Debit loop', () => {
   });
 
   it('says when the supplier finished, for the list of what they completed today', async () => {
-    const { orders } = build();
+    const { orders, push } = build();
     const order = orderOf(OrderType.Tax12);
     expect(toSupplierOrder(order).completedAt).toBeNull();
 
     await orders.attachInvoice(order, INVOICE_FILE, supplierUser.userId);
 
     expect(toSupplierOrder(order).completedAt).toBe(order.invoiceUploadedAt!.toISOString());
+    /* An emailed order: the receipt is in the customer's Orders tab the moment it is uploaded. */
+    expect(push.toCustomer.mock.calls[0][1]).toMatchObject({
+      title: 'Your tax receipt is ready',
+      data: { kind: 'customer.receipt_ready' },
+    });
   });
 
   it('only lets each side move on their own turn', async () => {
@@ -697,6 +708,7 @@ describe('an admin completing a flagged order', () => {
     expect(notifications.clearForOrder).toHaveBeenCalledWith(order._id);
     expect(realtime.orderChanged).toHaveBeenCalledWith(order);
     expect(push.toSupplier.mock.calls[0][1]).toMatchObject({ data: { kind: 'order.completed' } });
+    expect(push.toCustomer.mock.calls[0][1]).toMatchObject({ data: { kind: 'customer.completed' } });
 
     expect(toSupplierOrder(order)).toMatchObject({ status: 'completed', flagged: false });
     expect(toAdminOrder(order)).toMatchObject({ status: 'invoice_sent', flagged: false });
@@ -742,6 +754,7 @@ describe('an admin cancelling a flagged order', () => {
     expect(notifications.clearForOrder).toHaveBeenCalledWith(order._id);
     expect(realtime.orderChanged).toHaveBeenCalledWith(order);
     expect(push.toSupplier.mock.calls[0][1]).toMatchObject({ data: { kind: 'order.cancelled' } });
+    expect(push.toCustomer.mock.calls[0][1]).toMatchObject({ data: { kind: 'customer.cancelled' } });
 
     /* Out of the flagged queue, but the reason it was cancelled is kept. */
     expect(toSupplierOrder(order)).toMatchObject({ status: 'cancelled', flagged: false });

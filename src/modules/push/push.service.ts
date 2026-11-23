@@ -71,6 +71,17 @@ export class PushService {
     );
   }
 
+  /** The customer who placed the order - their phones, and nobody else's. */
+  async toCustomer(
+    customerId: string | Types.ObjectId | null,
+    message: PushMessage,
+  ): Promise<number> {
+    if (!this.sender || !customerId) {
+      return 0;
+    }
+    return this.toUsers([customerId], message);
+  }
+
   /** Every admin. There is no per-order admin, so they all get it. */
   async toAdmins(message: PushMessage): Promise<number> {
     if (!this.sender) {

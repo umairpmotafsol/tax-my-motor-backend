@@ -318,6 +318,33 @@ export class OrdersService {
     });
   }
 
+  /**
+   * News for the customer who placed the order, to their phones only.
+   *
+   * Public because the bank loop (BankReviewService) tells the customer
+   * too. `kind` is prefixed `customer.` so the two apps can never mistake
+   * each other's messages: a supplier's `order.*` and a customer's
+   * `customer.*` share one sender and one channel, nothing else.
+   */
+  async pushToCustomer(
+    order: OrderDocument,
+    kind: string,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    await this.push.toCustomer(order.customer, {
+      title,
+      body,
+      data: {
+        kind,
+        orderId: String(order._id),
+        orderType: order.orderType,
+        orderNumber: order.orderNumber,
+        reg: order.reg,
+      },
+    });
+  }
+
   /* ---------------------------------- reads --------------------------------- */
 
   async findById(id: string): Promise<OrderDocument> {
@@ -524,6 +551,12 @@ export class OrdersService {
     }
     this.realtime.orderChanged(order);
     if (!viaAdmin) {
+      await this.pushToCustomer(
+        order,
+        'customer.receipt_ready',
+        'Your tax receipt is ready',
+        order.reg + ' · Open Orders to view your receipt and invoice.',
+      );
       /*
        * Not awaited. The supplier's part ended with the upload, and a
        * slow mail server is no reason to keep their request open — or
@@ -663,6 +696,12 @@ export class OrdersService {
 
     await this.notifications.resolve(NotificationType.WhatsappSendRequired, order._id);
     this.realtime.orderChanged(order);
+    await this.pushToCustomer(
+      order,
+      'customer.receipt_ready',
+      'Your tax receipt is ready',
+      order.reg + ' · Open Orders to view your receipt and invoice.',
+    );
     return order;
   }
 
@@ -931,6 +970,12 @@ export class OrdersService {
     /* Every standing alert described an order somebody still had to act on. */
     await this.notifications.clearForOrder(order._id);
     this.realtime.orderChanged(order);
+    await this.pushToCustomer(
+      order,
+      'customer.completed',
+      'Your order is complete',
+      order.reg + ' · Open Orders for the details.',
+    );
     if (order.supplier) {
       await this.push.toSupplier(order.supplier, {
         title: 'Order completed',
@@ -974,6 +1019,12 @@ export class OrdersService {
     /* Every standing alert described an order somebody still had to act on. */
     await this.notifications.clearForOrder(order._id);
     this.realtime.orderChanged(order);
+    await this.pushToCustomer(
+      order,
+      'customer.cancelled',
+      'Your order was cancelled',
+      order.reg + ' · Open Orders to see why.',
+    );
     if (order.supplier) {
       await this.push.toSupplier(order.supplier, {
         title: 'Order cancelled',

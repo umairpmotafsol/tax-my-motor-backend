@@ -71,6 +71,12 @@ export class BankReviewService {
       order.customer,
     );
     this.realtime.bankApproved(order);
+    await this.orders.pushToCustomer(
+      order,
+      'customer.bank_approved',
+      'Direct Debit set up',
+      order.reg + ' · Your bank details were approved.',
+    );
     return order;
   }
 
@@ -130,6 +136,12 @@ export class BankReviewService {
       order.customer,
     );
     this.realtime.bankChangesRequested(order);
+    await this.orders.pushToCustomer(
+      order,
+      'customer.bank_changes',
+      'Your bank details need a fix',
+      order.reg + ' · They were sent back. Tap to correct them.',
+    );
     if (escalated) {
       await this.orders.announceFlag(order);
     }

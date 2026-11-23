@@ -187,3 +187,28 @@ describe('when Firebase is having a bad day', () => {
     await expect(serviceWith(sender, users).toAdmins(message)).resolves.toBe(0);
   });
 });
+
+describe('telling a customer', () => {
+  it('reaches that customer’s phones and nobody else’s', async () => {
+    const sender = { sendEachForMulticast: deliversEverything() };
+    const users = usersWith({ deviceTokensFor: jest.fn(async () => ['phone-a', 'phone-b']) });
+    const push = serviceWith(sender, users);
+
+    expect(await push.toCustomer('customer-1', message)).toBe(2);
+
+    expect(users.deviceTokensFor).toHaveBeenCalledWith(['customer-1']);
+    expect(users.listBySupplier).not.toHaveBeenCalled();
+    expect(users.listByRole).not.toHaveBeenCalled();
+    expect(sender.sendEachForMulticast.mock.calls[0][0]).toMatchObject({
+      tokens: ['phone-a', 'phone-b'],
+      android: { priority: 'high', notification: { channelId: 'orders' } },
+    });
+  });
+
+  it('is free when push is off, and when there is no customer', async () => {
+    const users = usersWith();
+    expect(await serviceWith(null, users).toCustomer('customer-1', message)).toBe(0);
+    expect(await serviceWith({ sendEachForMulticast: deliversEverything() }, users).toCustomer(null, message)).toBe(0);
+    expect(users.deviceTokensFor).not.toHaveBeenCalled();
+  });
+});

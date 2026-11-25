@@ -1,6 +1,6 @@
 /**
- * The vehicle half of a V62: the identity package is bought for a plate
- * whose tax lookup left it undescribed, once, and never otherwise. As in
+ * The vehicle half of a V62: the identity package is bought with every
+ * lookup, and at most once more for a plate cached without it. As in
  * vehicles.tax.spec, nothing here reaches the paid endpoint.
  */
 import { VehicleDataClient } from './vehicle-data.client';
@@ -84,19 +84,45 @@ function setup(details: unknown) {
 }
 
 describe('the vehicle on a V62', () => {
-  it('is not described beyond its make by the lookup a quote uses', async () => {
+  it('is described in full by the lookup a quote uses', async () => {
     const { service, fetchDetails } = setup(IDENTITY);
 
     const vehicle = await service.lookup('AP52HOW');
 
     expect(vehicle).toMatchObject({
       make: 'VOLKSWAGEN',
-      variant: '',
-      colour: '',
-      vin: '',
+      variant: 'GOLF GTI',
+      colour: 'SILVER',
+      vin: 'WVWZZZ1JZ2W386752',
       year: 2002,
     });
-    expect(fetchDetails).not.toHaveBeenCalled();
+    expect(fetchDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('gains its model and colour once when cached before every lookup asked for them', async () => {
+    const { service, cache, fetchDetails } = setup(IDENTITY);
+    /* A row as the Tax-only lookup used to leave it: no identity response. */
+    await cache.updateOne(
+      {},
+      {
+        $set: {
+          reg: 'AP52HOW',
+          raw: structuredClone(VEHICLE_TAX_SAMPLE),
+          detailsRaw: null,
+          details: {},
+          vehicle: { make: 'VOLKSWAGEN', variant: null, colour: null, vin: null, fuelType: null, yearOfManufacture: 2002 },
+          source: 'live',
+          fetchedAt: new Date(),
+          mappingVersion: 3,
+        },
+      },
+    );
+
+    const first = await service.lookup('AP52HOW');
+    await service.lookup('AP52HOW');
+
+    expect(first).toMatchObject({ variant: 'GOLF GTI', colour: 'SILVER' });
+    expect(fetchDetails).toHaveBeenCalledTimes(1);
   });
 
   it('gains its model, colour and VIN when the order carries a V62', async () => {

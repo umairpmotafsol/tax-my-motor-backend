@@ -863,11 +863,12 @@ describe('pricing from DVLA tables when the provider has no rate', () => {
   };
 
   /*
-   * What a plate costs. Tax is always paid; each further call only when
-   * the one before it could not settle the price.
+   * What a plate costs. Tax and the identity package are always paid
+   * (the identity gives the model, year and colour shown under the
+   * plate); the valuation only when it could change the price.
    */
   describe('the number of paid calls', () => {
-    it('is one for a vehicle the Tax package prices', async () => {
+    it('is two for a vehicle the Tax package prices', async () => {
       const { service, fetchTax, fetchDetails, fetchValuation } = setup({
         tax: VEHICLE_TAX_SAMPLE as never,
         details: YD23OGM_DETAILS as never,
@@ -876,7 +877,7 @@ describe('pricing from DVLA tables when the provider has no rate', () => {
       await service.checkTax('AP52HOW');
 
       expect(fetchTax).toHaveBeenCalledTimes(1);
-      expect(fetchDetails).not.toHaveBeenCalled();
+      expect(fetchDetails).toHaveBeenCalledTimes(1);
       expect(fetchValuation).not.toHaveBeenCalled();
     });
 

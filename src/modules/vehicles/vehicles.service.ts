@@ -251,13 +251,11 @@ export class VehiclesService {
   /**
    * The same lookup, for an order that carries a V62.
    *
-   * A plate the Tax package priced is deliberately not described any
-   * further — one bill, with model, colour and VIN left blank. That is
-   * right for a quote and wrong for a V62, which DVLA returns unprocessed
-   * without a VIN. So when the form is actually going to be filed, the
-   * identity package is asked this once and its answer kept beside the
-   * tax row: one more bill, on V62 orders only, and never twice for the
-   * same plate.
+   * Every lookup now asks the identity package, so this normally has
+   * nothing to add. It stays as a safety net for a V62, which DVLA
+   * returns unprocessed without a VIN: if the identity package did not
+   * answer earlier, it is asked once more here, and never twice for the
+   * same plate once it has answered.
    *
    * Best effort, like the package itself: with none configured, or no
    * answer, the order goes ahead on what is known and the admin
@@ -383,6 +381,14 @@ export class VehiclesService {
     });
 
     if (cached && Date.now() - new Date(cached.fetchedAt).getTime() < this.cacheTtlMs) {
+      /*
+       * A row cached before every lookup fetched the identity package
+       * has no model or colour. It gets the identity package added once,
+       * without paying for the Tax call again or touching the quoted price.
+       */
+      if (cached.raw && !cached.detailsRaw && (await this.addIdentity(bare))) {
+        cached = (await this.taxCacheModel.findOne({ reg: bare }).lean()) ?? cached;
+      }
       return readCache(false);
     }
 
@@ -392,9 +398,9 @@ export class VehiclesService {
       const identityPayload = identity?.payload ?? null;
       const source = tax?.source ?? identity!.source;
 
-      // At most three calls: Tax always; the identity package only when Tax
-      // gave no rate; the list price, the dearest, only for a car whose
-      // price could change the tax on it.
+      // At most three calls: Tax and the identity package always; the list
+      // price, the dearest, only for a car whose price could change the
+      // tax on it.
       let valuationPayload: Record<string, unknown> | null = null;
       const mapped = this.mapTaxResponse(bare, payload);
       if (!mapped.ved && needsListPrice(readVehicleFacts(payload, identityPayload))) {
@@ -507,13 +513,12 @@ export class VehiclesService {
   }
 
   /**
-   * The Tax package, then — only if it could not price the vehicle — the
-   * identity package.
+   * The Tax package, then the identity package.
    *
-   * Every plate costs the Tax call. The identity call is a second bill,
-   * and it is only needed to price from DVLA's tables, so a vehicle the
-   * Tax package already priced is not described any further: one call,
-   * as before the tables existed, with model and colour left blank.
+   * Every plate costs both calls. The identity package is what gives the
+   * customer the model, year and colour under the plate on the checkout
+   * screens, and it lets a vehicle the Tax package cannot price be priced
+   * from DVLA's tables.
    *
    * When Tax has no record at all, the identity package, which reads the
    * DVLA register itself, is still asked: a vehicle it knows can be
@@ -532,9 +537,6 @@ export class VehiclesService {
         throw err;
       }
       notFound = err;
-    }
-    if (tax && this.mapTaxResponse(bare, tax.payload).ved) {
-      return { tax, identity: null };
     }
     const identity = await this.vehicleData.fetchDetails(bare);
     if (!tax && !identity) {

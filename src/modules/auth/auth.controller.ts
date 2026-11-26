@@ -9,7 +9,6 @@ import { toPublicUser } from '../users/users.serializer';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import {
-  ChangePasswordDto,
   LoginDto,
   RefreshDto,
   RegisterDto,
@@ -74,15 +73,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Update the saved profile reused on every order' })
   async updateMe(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return toPublicUser(await this.users.updateProfile(user.userId, dto));
-  }
-
-  @Post('change-password')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Change the password on the signed-in account' })
-  async changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
-    await this.users.changePassword(user.userId, dto.currentPassword, dto.newPassword);
-    /* Every other device is signed out — a password change is usually a response to something. */
-    await this.auth.logoutEverywhere(user.userId);
   }
 }
 

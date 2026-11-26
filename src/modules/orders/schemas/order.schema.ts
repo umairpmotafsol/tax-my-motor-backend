@@ -73,6 +73,10 @@ export class OrderVehicle {
   @Prop({ default: '' })
   colour!: string;
 
+  /** Year of manufacture. Null on orders placed before it was kept. */
+  @Prop({ type: Number, default: null })
+  year!: number | null;
+
   @Prop({ default: '' })
   vin!: string;
 
@@ -91,6 +95,13 @@ const OrderVehicleSchema = SchemaFactory.createForClass(OrderVehicle);
 export class CustomerSnapshot {
   @Prop({ required: true })
   name!: string;
+
+  /* Blank on orders placed before names were split; read from `name` then. */
+  @Prop({ default: '' })
+  firstName!: string;
+
+  @Prop({ default: '' })
+  lastName!: string;
 
   @Prop({ default: '' })
   email!: string;
@@ -439,9 +450,6 @@ export class Order {
 
   @Prop({ required: true, min: 0 })
   total!: number;
-
-  @Prop({ default: '' })
-  deliveryAddress!: string;
 
   /** Null on Direct Debit orders, which are never charged here. */
   @Prop({ type: PaymentInfoSchema, default: null })

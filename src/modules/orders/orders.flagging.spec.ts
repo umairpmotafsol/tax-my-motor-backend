@@ -322,6 +322,23 @@ describe('the Direct Debit loop', () => {
       title: 'Your tax receipt is ready',
       data: { kind: 'customer.receipt_ready' },
     });
+    /* Nothing for the admins to send on an emailed order. */
+    expect(push.toAdmins).not.toHaveBeenCalled();
+  });
+
+  it("tells every admin's phone when a WhatsApp order's receipt is ready to send", async () => {
+    const { orders, push } = build();
+    const order = orderOf(OrderType.Tax12, { communicationMethod: CommunicationMethod.WhatsApp });
+
+    await orders.attachInvoice(order, INVOICE_FILE, supplierUser.userId);
+
+    expect(push.toAdmins).toHaveBeenCalledTimes(1);
+    expect(push.toAdmins.mock.calls[0][0]).toMatchObject({
+      title: 'Receipt ready to send on WhatsApp',
+      data: { kind: 'order.whatsapp_ready', reg: order.reg },
+    });
+    /* The customer hears only once an admin has sent it. */
+    expect(push.toCustomer).not.toHaveBeenCalled();
   });
 
   it('only lets each side move on their own turn', async () => {

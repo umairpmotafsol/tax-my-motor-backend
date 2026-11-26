@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
@@ -8,6 +13,7 @@ import { Paginated, paginate } from '../../common/dto/pagination.dto';
 import { InvoiceStatus, OPEN_STATUSES } from '../../common/enums/order.enum';
 import { Role } from '../../common/enums/role.enum';
 import { initials } from '../../common/utils/format.util';
+import { joinName, nameParts, splitName } from '../../common/utils/name.util';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { User, UserDocument } from './schemas/user.schema';
 
@@ -22,7 +28,10 @@ export interface CustomerOrderStats {
 }
 
 export interface CreateUserInput {
-  name: string;
+  /** Give a first and last name, or one whole name to be split. */
+  firstName?: string;
+  lastName?: string;
+  name?: string;
   email: string;
   password: string;
   role: Role;
@@ -32,8 +41,6 @@ export interface CreateUserInput {
   postcode?: string;
   supplier?: Types.ObjectId | string | null;
   referredByCode?: string;
-  /** Set when the password is one an admin generated rather than one the holder chose. */
-  mustChangePassword?: boolean;
 }
 
 @Injectable()
@@ -56,8 +63,19 @@ export class UsersService {
       ? await this.userModel.findOne({ referralCode: input.referredByCode.trim().toUpperCase() })
       : null;
 
+    const parts =
+      input.firstName || input.lastName
+        ? { firstName: (input.firstName ?? '').trim(), lastName: (input.lastName ?? '').trim() }
+        : splitName(input.name);
+    const name = joinName(parts.firstName, parts.lastName);
+    if (!name) {
+      throw new BadRequestException('Please tell us your name.');
+    }
+
     const user = await this.userModel.create({
-      name: input.name.trim(),
+      name,
+      firstName: parts.firstName,
+      lastName: parts.lastName,
       email,
       passwordHash: await this.hashPassword(input.password),
       role: input.role,
@@ -66,9 +84,8 @@ export class UsersService {
       city: input.city ?? '',
       postcode: input.postcode ?? '',
       supplier: input.supplier ? new Types.ObjectId(input.supplier) : null,
-      referralCode: input.role === Role.Customer ? await this.mintReferralCode(input.name) : undefined,
+      referralCode: input.role === Role.Customer ? await this.mintReferralCode(name) : undefined,
       referredBy: referrer?._id ?? null,
-      mustChangePassword: input.mustChangePassword ?? false,
     });
 
     return user;
@@ -233,9 +250,33 @@ export class UsersService {
 
   async updateProfile(
     id: string | Types.ObjectId,
-    patch: Partial<Pick<User, 'name' | 'email' | 'phone' | 'address' | 'city' | 'postcode'>>,
+    patch: Partial<
+      Pick<User, 'name' | 'firstName' | 'lastName' | 'email' | 'phone' | 'address' | 'city' | 'postcode'>
+    >,
   ): Promise<UserDocument> {
     const next = { ...patch };
+
+    /*
+     * The parts and the whole name always move together. Changing one
+     * part keeps the other as it was; an older app build that still
+     * sends one whole name has it split.
+     */
+    if (next.firstName !== undefined || next.lastName !== undefined) {
+      const current = await this.userModel.findById(id).select('name firstName lastName').lean();
+      if (!current) {
+        throw new NotFoundException('That account no longer exists.');
+      }
+      const parts = nameParts(current);
+      next.firstName = next.firstName ?? parts.firstName;
+      next.lastName = next.lastName ?? parts.lastName;
+      next.name = joinName(next.firstName, next.lastName);
+    } else if (next.name !== undefined) {
+      Object.assign(next, splitName(next.name));
+      next.name = joinName(next.firstName, next.lastName);
+    }
+    if (next.name !== undefined && !next.name) {
+      throw new BadRequestException('Please tell us your name.');
+    }
 
     if (next.email !== undefined) {
       // Email is the login identifier and carries a unique index, so a
@@ -257,36 +298,16 @@ export class UsersService {
     return user;
   }
 
-  async changePassword(id: string | Types.ObjectId, current: string, next: string): Promise<void> {
-    const user = await this.findByIdWithPassword(id);
-    const matches = await bcrypt.compare(current, user.passwordHash);
-    if (!matches) {
-      throw new ConflictException('Your current password is not correct.');
-    }
-    user.passwordHash = await this.hashPassword(next);
-    /* Chosen by the holder, so nobody else is holding a copy of it. */
-    user.mustChangePassword = false;
-    await user.save();
-  }
-
   /**
-   * Sets a password without knowing the old one — the admin resetting a
-   * supplier's sign-in, who by definition cannot supply it. Kept apart
-   * from `changePassword` so the path that skips the current-password
-   * check is one an admin-only controller has to ask for by name.
-   *
-   * A password set this way is known to whoever set it, so it is marked
-   * for replacement by default; pass `false` only where that is not
-   * true.
+   * Sets a password without knowing the old one: the admin generating a
+   * new one for a supplier's sign-in. This is the only way a password
+   * changes. Nobody can change their own; an admin issues every supplier
+   * password, and a supplier who loses theirs asks the admin for a new
+   * one.
    */
-  async setPassword(
-    id: string | Types.ObjectId,
-    next: string,
-    mustChangePassword = true,
-  ): Promise<UserDocument> {
+  async setPassword(id: string | Types.ObjectId, next: string): Promise<UserDocument> {
     const user = await this.findByIdWithPassword(id);
     user.passwordHash = await this.hashPassword(next);
-    user.mustChangePassword = mustChangePassword;
     await user.save();
     return user;
   }

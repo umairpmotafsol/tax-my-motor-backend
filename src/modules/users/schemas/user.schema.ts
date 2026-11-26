@@ -38,8 +38,19 @@ export const DeviceTokenSchema = SchemaFactory.createForClass(DeviceToken);
  */
 @Schema({ timestamps: true, collection: 'users' })
 export class User {
+  /** The first and last name joined — what lists, orders and emails show. */
   @Prop({ required: true, trim: true })
   name!: string;
+
+  /*
+   * Blank on accounts made before names were split; `nameParts()` reads
+   * those from `name` instead.
+   */
+  @Prop({ trim: true, default: '' })
+  firstName!: string;
+
+  @Prop({ trim: true, default: '' })
+  lastName!: string;
 
   @Prop({ required: true, unique: true, lowercase: true, trim: true, index: true })
   email!: string;
@@ -88,16 +99,6 @@ export class User {
 
   @Prop({ type: Boolean, default: true })
   active!: boolean;
-
-  /**
-   * True while the account is still on a password somebody else chose.
-   * Supplier sign-ins are opened by an admin, who generates the first
-   * password and sends it over — so until the holder replaces it, the
-   * admin knows it too. The supplier app asks for a replacement on the
-   * next sign-in; `changePassword` clears this.
-   */
-  @Prop({ type: Boolean, default: false })
-  mustChangePassword!: boolean;
 
   @Prop({ type: Date, default: null })
   lastLoginAt!: Date | null;

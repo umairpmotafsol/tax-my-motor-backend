@@ -159,12 +159,6 @@ export class PlaceOrderDto {
   @Transform(trim)
   whatsapp?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  @Transform(trim)
-  deliveryAddress?: string;
-
   /** Required when the option is Direct Debit. */
   @IsOptional()
   @ValidateNested()

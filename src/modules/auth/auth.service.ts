@@ -42,6 +42,8 @@ export class AuthService {
   /** Self-service sign-up is for customers. Suppliers and admins are created by an admin. */
   async register(dto: RegisterDto, ctx: RequestContext = {}): Promise<AuthResult> {
     const user = await this.users.create({
+      firstName: dto.firstName,
+      lastName: dto.lastName,
       name: dto.name,
       email: dto.email,
       password: dto.password,

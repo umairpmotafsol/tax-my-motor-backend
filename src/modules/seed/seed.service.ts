@@ -321,7 +321,6 @@ export class SeedService implements OnApplicationBootstrap {
         items: this.pricing.itemsFor(spec.option, false),
         pricing,
         total: pricing.total,
-        deliveryAddress: customer.address + ', ' + customer.city + ', ' + customer.postcode,
         status: spec.status,
         invoiceStatus: done
           ? InvoiceStatus.Sent

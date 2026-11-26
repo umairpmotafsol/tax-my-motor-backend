@@ -1,3 +1,4 @@
+import { nameParts } from '../../common/utils/name.util';
 import { UserDocument } from './schemas/user.schema';
 import { CustomerOrderStats } from './users.service';
 
@@ -9,6 +10,8 @@ import { CustomerOrderStats } from './users.service';
 export interface PublicUser {
   id: string;
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   phone: string;
   role: string;
@@ -18,8 +21,6 @@ export interface PublicUser {
   postcode: string;
   referralCode: string | null;
   freeOrders: number;
-  /** Still on an admin-issued password — the app asks them to replace it. */
-  mustChangePassword: boolean;
   createdAt: string | null;
 }
 
@@ -27,6 +28,7 @@ export function toPublicUser(user: UserDocument): PublicUser {
   return {
     id: String(user._id),
     name: user.name,
+    ...nameParts(user),
     email: user.email,
     phone: user.phone,
     role: user.role,
@@ -36,7 +38,6 @@ export function toPublicUser(user: UserDocument): PublicUser {
     postcode: user.postcode,
     referralCode: user.referralCode ?? null,
     freeOrders: user.freeOrders,
-    mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: toIso((user as unknown as { createdAt?: Date }).createdAt),
   };
 }
@@ -50,6 +51,8 @@ export function toPublicUser(user: UserDocument): PublicUser {
 export interface AdminCustomer {
   id: string;
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   phone: string;
   city: string;
@@ -76,6 +79,7 @@ export function toAdminCustomer(user: UserDocument, stats?: CustomerOrderStats):
   return {
     id: String(user._id),
     name: user.name,
+    ...nameParts(user),
     email: user.email,
     phone: user.phone,
     city: user.city,

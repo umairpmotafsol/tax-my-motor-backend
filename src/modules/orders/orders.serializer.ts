@@ -6,6 +6,7 @@ import {
   OrderStatus,
 } from '../../common/enums/order.enum';
 import { decryptField, maskAccountNumber } from '../../common/utils/crypto.util';
+import { nameParts } from '../../common/utils/name.util';
 import { OrderDocument } from './schemas/order.schema';
 
 /**
@@ -75,6 +76,7 @@ function baseOrder(order: OrderDocument) {
       variant: order.vehicle.variant,
       model: order.vehicle.model,
       colour: order.vehicle.colour,
+      year: order.vehicle.year ?? null,
       taxClass: order.vehicle.taxClass,
     },
     orderType: order.orderType,
@@ -282,12 +284,12 @@ export function toAdminOrder(order: OrderDocument, suppliers?: SupplierLookup) {
     customer: {
       id: String(order.customer),
       name: order.customerSnapshot.name,
+      ...nameParts(order.customerSnapshot),
       email: order.customerSnapshot.email,
       phone: order.customerSnapshot.phone,
     },
     supplier: supplierRef(order, suppliers),
     ...flagView(order),
-    deliveryAddress: order.deliveryAddress,
     pricing: order.pricing,
     payment: paymentSummary(order),
     invoiceFileName: order.invoice?.fileName ?? null,

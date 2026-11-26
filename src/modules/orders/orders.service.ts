@@ -30,6 +30,7 @@ import { Role } from '../../common/enums/role.enum';
 import { bankProblems, normaliseIban } from '../../common/utils/bank.util';
 import { encryptField } from '../../common/utils/crypto.util';
 import { formatReg, gbp, normaliseReg, startOfDay } from '../../common/utils/format.util';
+import { nameParts } from '../../common/utils/name.util';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PushService } from '../push/push.service';
@@ -174,6 +175,7 @@ export class OrdersService {
       customer: customer._id,
       customerSnapshot: {
         name: customer.name,
+        ...nameParts(customer),
         email: dto.email || customer.email,
         phone: dto.whatsapp || customer.phone,
       },
@@ -184,6 +186,7 @@ export class OrdersService {
         variant: vehicle.variant,
         model: vehicle.model,
         colour: vehicle.colour,
+        year: vehicle.year ?? null,
         vin: vehicle.vin,
         taxClass: vehicle.taxClass,
       },
@@ -192,7 +195,6 @@ export class OrdersService {
       items: this.pricing.itemsFor(dto.option, withV62),
       pricing,
       total: pricing.total,
-      deliveryAddress: dto.deliveryAddress || customer.address,
       payment,
       status: supplier ? OrderStatus.AwaitingSupplier : OrderStatus.Unassigned,
       invoiceStatus: InvoiceStatus.Pending,
@@ -548,6 +550,7 @@ export class OrdersService {
     }
     if (viaAdmin) {
       await this.notifications.raise(NotificationType.WhatsappSendRequired, order._id);
+      await this.pushWhatsappReady(order);
     }
     this.realtime.orderChanged(order);
     if (!viaAdmin) {
@@ -829,6 +832,28 @@ export class OrdersService {
     order.flag!.resolvedAt = at;
     order.flag!.resolution = resolution;
     order.flag!.response = response;
+  }
+
+  /**
+   * A WhatsApp order's invoice is in, and only an admin can pass it on:
+   * the customer hears nothing until one sends it from the supplier
+   * app. So every admin's phone is told, the same way a flag is, rather
+   * than the order waiting for someone to happen to open the board.
+   */
+  private async pushWhatsappReady(order: OrderDocument): Promise<void> {
+    if (!this.push.enabled) {
+      return;
+    }
+    await this.push.toAdmins({
+      title: 'Receipt ready to send on WhatsApp',
+      body: order.reg + ' · The invoice is in. Send it to the customer on WhatsApp.',
+      data: {
+        kind: 'order.whatsapp_ready',
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        reg: order.reg,
+      },
+    });
   }
 
   /** Tells the admins, on every channel they watch, that a flag went up. */

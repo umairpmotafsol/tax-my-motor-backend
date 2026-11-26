@@ -12,11 +12,27 @@ const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
 export class RegisterDto {
+  /*
+   * A first and last name, or — from app builds older than the split —
+   * one whole name. `AuthService.register` insists on one or the other.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Please tell us your name.' })
+  @MaxLength(60)
+  @Transform(trim)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  @Transform(trim)
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(120)
   @Transform(trim)
-  name!: string;
+  name?: string;
 
   @IsEmail({}, { message: 'Please enter a valid email address.' })
   @Transform(trim)
@@ -70,6 +86,21 @@ export class RefreshDto {
 export class UpdateProfileDto {
   @IsOptional()
   @IsString()
+  @IsNotEmpty({ message: 'Please enter your first name.' })
+  @MaxLength(60)
+  @Transform(trim)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'Please enter your last name.' })
+  @MaxLength(60)
+  @Transform(trim)
+  lastName?: string;
+
+  /** The whole name, as app builds older than the split still send it. */
+  @IsOptional()
+  @IsString()
   @MaxLength(120)
   @Transform(trim)
   name?: string;
@@ -109,15 +140,4 @@ export class UpdateProfileDto {
   @MaxLength(16)
   @Transform(trim)
   postcode?: string;
-}
-
-export class ChangePasswordDto {
-  @IsString()
-  @IsNotEmpty()
-  currentPassword!: string;
-
-  @IsString()
-  @MinLength(8, { message: 'Your new password needs to be at least 8 characters.' })
-  @MaxLength(128)
-  newPassword!: string;
 }

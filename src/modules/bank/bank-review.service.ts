@@ -207,13 +207,21 @@ export class BankReviewService {
       tone: null,
     });
 
-    /* Back in the supplier's court, so their window starts again. */
-    if (order.invoiceStatus === InvoiceStatus.Pending) {
-      this.orders.restartWindow(order, at);
-    }
+    /*
+     * Back in the supplier's court, so their window starts again — or,
+     * if they went off duty while the customer had it, back to waiting
+     * for whoever is on.
+     */
+    const kept =
+      order.invoiceStatus === InvoiceStatus.Pending
+        ? await this.orders.restartOrRelease(order, at)
+        : true;
 
     await order.save();
     await this.notifications.resolve(NotificationType.BankChangesRequested, order._id);
+    if (!kept) {
+      return this.orders.routeWaiting(order);
+    }
     this.realtime.bankResubmitted(order);
     await this.orders.pushBankReturned(order);
     return order;

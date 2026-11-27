@@ -90,6 +90,7 @@ function build() {
   };
   const realtime = {
     orderChanged: jest.fn(),
+    whatsappReady: jest.fn(),
     orderFlagged: jest.fn(),
     bankApproved: jest.fn(),
     bankChangesRequested: jest.fn(),
@@ -101,7 +102,10 @@ function build() {
     toSupplier: jest.fn(async (..._a: unknown[]) => 1),
     toCustomer: jest.fn(async (..._a: unknown[]) => 1),
   };
-  const suppliers = { findById: jest.fn(async () => ({ name: 'Northgate Motors' })) };
+  /* On duty, so an order coming back to them restarts their window rather than going back to wait. */
+  const suppliers = {
+    findById: jest.fn(async () => ({ name: 'Northgate Motors', status: 'active', onDuty: true })),
+  };
   const config = {
     get: (key: string) => (key === 'responseTimeoutMs' ? WINDOW_MS : undefined),
   };
@@ -327,7 +331,7 @@ describe('the Direct Debit loop', () => {
   });
 
   it("tells every admin's phone when a WhatsApp order's receipt is ready to send", async () => {
-    const { orders, push } = build();
+    const { orders, push, notifications, realtime } = build();
     const order = orderOf(OrderType.Tax12, { communicationMethod: CommunicationMethod.WhatsApp });
 
     await orders.attachInvoice(order, INVOICE_FILE, supplierUser.userId);
@@ -337,6 +341,12 @@ describe('the Direct Debit loop', () => {
       title: 'Receipt ready to send on WhatsApp',
       data: { kind: 'order.whatsapp_ready', reg: order.reg },
     });
+    /* And the portal: the bell, and on screen for an admin who has it open. */
+    expect(notifications.raise).toHaveBeenCalledWith(
+      NotificationType.WhatsappSendRequired,
+      order._id,
+    );
+    expect(realtime.whatsappReady).toHaveBeenCalledWith(order);
     /* The customer hears only once an admin has sent it. */
     expect(push.toCustomer).not.toHaveBeenCalled();
   });

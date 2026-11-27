@@ -1,15 +1,24 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
-import { Model } from 'mongoose';
+import { randomInt } from 'crypto';
+import { Model, Types } from 'mongoose';
 
 import { Role } from '../../common/enums/role.enum';
 import { hashToken, randomToken } from '../../common/utils/crypto.util';
+import { MailService } from '../mail/mail.service';
 import { PublicUser, toPublicUser } from '../users/users.serializer';
 import { UsersService } from '../users/users.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { PasswordReset, PasswordResetDocument } from './schemas/password-reset.schema';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -22,6 +31,11 @@ export interface AuthTokens {
 export interface AuthResult extends AuthTokens {
   user: PublicUser;
 }
+
+/** How long an emailed reset code lasts. */
+export const RESET_CODE_TTL_MS = 15 * 60_000;
+/** Wrong codes before the code is used up and a new one has to be asked for. */
+export const RESET_CODE_MAX_ATTEMPTS = 5;
 
 interface RequestContext {
   userAgent?: string;
@@ -37,6 +51,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
+    @InjectModel(PasswordReset.name) private readonly resetModel: Model<PasswordResetDocument>,
+    private readonly mail: MailService,
   ) {}
 
   /** Self-service sign-up is for customers. Suppliers and admins are created by an admin. */
@@ -126,6 +142,121 @@ export class AuthService {
 
   async logoutEverywhere(userId: string): Promise<void> {
     await this.sessionModel.deleteMany({ user: userId });
+  }
+
+  /* -------------------------------- passwords ------------------------------- */
+
+  /**
+   * From Settings. Every other device is signed out — a password change
+   * is usually a response to something — but this one stays signed in
+   * when it says which session it is.
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    keepRefreshToken?: string,
+  ): Promise<void> {
+    await this.users.changePassword(userId, currentPassword, newPassword);
+    await this.sessionModel.deleteMany({
+      user: userId,
+      ...(keepRefreshToken ? { tokenHash: { $ne: hashToken(keepRefreshToken) } } : {}),
+    });
+  }
+
+  /**
+   * "Forgot password?": emails a six-digit code, good for fifteen
+   * minutes. Asking again replaces the code, so only the latest email
+   * works.
+   *
+   * The answer is the same whether or not the address has an account,
+   * so this cannot be used to find out who is a customer. Only customer
+   * accounts are sent a code — suppliers and admins get a new password
+   * from an admin.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    const user = await this.users.findByEmailWithPassword(email);
+    if (!user || user.role !== Role.Customer || !user.active) {
+      this.logger.log('Password reset asked for an address with no customer account.');
+      return;
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await this.resetModel.findOneAndUpdate(
+      { user: user._id },
+      {
+        $set: {
+          codeHash: this.codeHash(user._id, code),
+          expiresAt: new Date(Date.now() + RESET_CODE_TTL_MS),
+          attempts: 0,
+        },
+      },
+      { upsert: true },
+    );
+
+    const sent = await this.mail.sendPasswordResetCode({
+      to: user.email,
+      customerName: user.name,
+      code,
+      minutes: RESET_CODE_TTL_MS / 60_000,
+    });
+    if (!sent.sent) {
+      /* A code nobody received is no use to anybody. */
+      await this.resetModel.deleteOne({ user: user._id });
+      throw new ServiceUnavailableException(
+        'We could not send the email just now. Please try again in a few minutes.',
+      );
+    }
+  }
+
+  /** The code screen's check, before the new password is asked for. Uses nothing up. */
+  async verifyResetCode(email: string, code: string): Promise<void> {
+    await this.checkResetCode(email, code);
+  }
+
+  /**
+   * Sets the new password, once the code checks out. The code is used
+   * up, and every session the account had is ended: whoever forgot the
+   * password signs in again with the new one, and anybody else who was
+   * signed in is not any more.
+   */
+  async resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+    const { user, reset } = await this.checkResetCode(email, code);
+    await this.users.setPassword(user._id, newPassword);
+    await this.resetModel.deleteOne({ _id: reset._id });
+    await this.sessionModel.deleteMany({ user: user._id });
+  }
+
+  private async checkResetCode(email: string, code: string) {
+    const invalid = () =>
+      new BadRequestException('That code is not right. Check the email and try again.');
+    const expired = () =>
+      new BadRequestException('That code has expired. Ask for a new one.');
+
+    const user = await this.users.findByEmailWithPassword(email);
+    const reset = user ? await this.resetModel.findOne({ user: user._id }) : null;
+    if (!user || !reset) {
+      throw expired();
+    }
+    if (reset.expiresAt.getTime() <= Date.now() || reset.attempts >= RESET_CODE_MAX_ATTEMPTS) {
+      await this.resetModel.deleteOne({ _id: reset._id });
+      throw expired();
+    }
+    if (reset.codeHash !== this.codeHash(user._id, code)) {
+      reset.attempts += 1;
+      await reset.save();
+      if (reset.attempts >= RESET_CODE_MAX_ATTEMPTS) {
+        await this.resetModel.deleteOne({ _id: reset._id });
+        throw new BadRequestException('Too many wrong codes. Ask for a new one.');
+      }
+      throw invalid();
+    }
+    return { user, reset };
+  }
+
+  /** Bound to the account, so one customer's code is not another's. */
+  private codeHash(userId: Types.ObjectId, code: string): string {
+    return hashToken(String(userId) + ':' + code);
   }
 
   /* -------------------------------- internals ------------------------------- */

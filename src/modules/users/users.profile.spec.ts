@@ -5,8 +5,9 @@
  * a unique index — these cover the three ways that combination can go
  * wrong.
  *
- * The password cases below cover the one way a password changes: an
- * admin generating a new one. Nobody changes their own.
+ * The password cases below cover the ways a password changes: an admin
+ * generating one, and a customer changing their own — which needs the
+ * current one.
  */
 import { ConflictException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
@@ -152,7 +153,23 @@ describe('setting a password', () => {
     expect(user.save).toHaveBeenCalledTimes(1);
   });
 
-  it('has no way for the holder to change their own', () => {
-    expect('changePassword' in UsersService.prototype).toBe(false);
+  it('lets a customer change their own, given the current one', async () => {
+    const { user, model } = storedUser(await bcrypt.hash('old-password', ROUNDS));
+
+    await serviceWith(model, ROUNDS).changePassword('u1', 'old-password', 'new-password');
+
+    expect(await bcrypt.compare('new-password', user.passwordHash)).toBe(true);
+    expect(user.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a wrong current password, and changes nothing', async () => {
+    const { user, model } = storedUser(await bcrypt.hash('old-password', ROUNDS));
+    const before = user.passwordHash;
+
+    await expect(
+      serviceWith(model, ROUNDS).changePassword('u1', 'not-it', 'new-password'),
+    ).rejects.toThrow('Your current password is not correct.');
+    expect(user.passwordHash).toBe(before);
+    expect(user.save).not.toHaveBeenCalled();
   });
 });

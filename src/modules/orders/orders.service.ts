@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -25,6 +26,7 @@ import {
   OrderFlagSource,
   OrderStatus,
   OrderType,
+  SupplierStatus,
 } from '../../common/enums/order.enum';
 import { Role } from '../../common/enums/role.enum';
 import { bankProblems, normaliseIban } from '../../common/utils/bank.util';
@@ -37,6 +39,7 @@ import { PushService } from '../push/push.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PricingService, vedRatesOf } from '../pricing/pricing.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { SupplierDocument } from '../suppliers/schemas/supplier.schema';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { UsersService } from '../users/users.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
@@ -239,8 +242,8 @@ export class OrdersService {
           : {
               at: now,
               actor: 'system',
-              title: 'Could not be assigned',
-              detail: 'No active supplier handles this order type',
+              title: 'Waiting for a supplier',
+              detail: 'Nobody is on duty — it goes to the first supplier who comes on, with no time limit',
               tone: 'red',
             },
       ],
@@ -549,7 +552,9 @@ export class OrdersService {
       );
     }
     if (viaAdmin) {
+      /* The bell in the portal, the portal on screen, and the admins' phones. */
       await this.notifications.raise(NotificationType.WhatsappSendRequired, order._id);
+      this.realtime.whatsappReady(order);
       await this.pushWhatsappReady(order);
     }
     this.realtime.orderChanged(order);
@@ -710,7 +715,7 @@ export class OrdersService {
 
   /* ------------------------------- reassignment ----------------------------- */
 
-  /** Moves an order to another supplier and starts a fresh window. */
+  /** Moves an order to another supplier and starts a fresh window — none on an untimed order. */
   async reassign(order: OrderDocument, supplierId: string): Promise<OrderDocument> {
     const target = await this.suppliers.findById(supplierId);
     this.assertLive(order);
@@ -722,19 +727,26 @@ export class OrdersService {
     if (String(order.supplier ?? '') === String(target._id)) {
       throw new BadRequestException('That order is already with this supplier.');
     }
+    /* The window starts the moment it lands, so it can only land on somebody working. */
+    if (target.status !== SupplierStatus.Active || !target.onDuty) {
+      throw new BadRequestException(
+        target.name + ' is off duty. Orders can only go to a supplier who is on duty.',
+      );
+    }
 
     const at = new Date();
     order.reassignedFrom = order.supplier;
     order.supplier = target._id;
     order.assignedAt = at;
     order.turnStartedAt = null;
-    order.dueAt = new Date(at.getTime() + this.responseTimeoutMs);
+    /* An order that came in while nobody was on duty stays untimed wherever it goes. */
+    order.dueAt = order.untimed ? null : new Date(at.getTime() + this.responseTimeoutMs);
     order.status = OrderStatus.AwaitingSupplier;
     order.timeline.push({
       at,
       actor: 'admin',
       title: 'Reassigned to ' + target.name,
-      detail: 'A new invoice window started',
+      detail: order.untimed ? 'No time limit — it came in while nobody was on duty' : 'A new invoice window started',
       tone: null,
     });
     await order.save();
@@ -941,10 +953,14 @@ export class OrdersService {
     });
 
     const restarted = order.bankReview?.status !== BankReviewStatus.ChangesRequested;
-    if (restarted) {
-      this.restartWindow(order, at);
-    }
+    const kept = restarted ? await this.restartOrRelease(order, at) : true;
     await order.save();
+    if (!kept) {
+      /* Its supplier went off duty while it was flagged: to whoever is on. */
+      await this.notifications.resolve(NotificationType.OrderFlagged, order._id);
+      await this.notifications.resolve(NotificationType.SupplierOverdue, order._id);
+      return this.routeWaiting(order);
+    }
 
     await this.notifications.resolve(NotificationType.OrderFlagged, order._id);
     if (restarted) {
@@ -1155,7 +1171,8 @@ export class OrdersService {
       return;
     }
     order.turnStartedAt = at;
-    order.dueAt = new Date(at.getTime() + this.responseTimeoutMs);
+    /* Back in the supplier's court — but an untimed order has no window to restart. */
+    order.dueAt = order.untimed ? null : new Date(at.getTime() + this.responseTimeoutMs);
     if (order.status === OrderStatus.Overdue) {
       order.status = OrderStatus.AwaitingSupplier;
     }
@@ -1164,6 +1181,209 @@ export class OrdersService {
   /** Pauses it — the ball is in the customer's court, or an admin's, and the clock should not run. */
   pauseWindow(order: OrderDocument): void {
     order.dueAt = null;
+  }
+
+  /**
+   * An order coming back to its supplier — the customer has corrected
+   * their bank details, or an admin has answered a flag. If they are on
+   * duty its window starts again, as `restartWindow`. If they have gone
+   * off duty since, a window would run against somebody who is not
+   * there, so instead the order goes back to waiting: unassigned, no
+   * clock. The caller saves, then hands it on with `routeWaiting`.
+   *
+   * @returns false when the order was put back to wait.
+   */
+  async restartOrRelease(order: OrderDocument, at: Date): Promise<boolean> {
+    if (this.isFlagged(order)) {
+      /* With an admin either way: their answer is what moves it on. */
+      return true;
+    }
+    const holder = order.supplier
+      ? await this.suppliers.findById(String(order.supplier)).catch(() => null)
+      : null;
+    if (holder && holder.status === SupplierStatus.Active && holder.onDuty) {
+      this.restartWindow(order, at);
+      return true;
+    }
+    order.reassignedFrom = order.supplier;
+    order.supplier = null;
+    order.assignedAt = null;
+    order.turnStartedAt = null;
+    order.dueAt = null;
+    order.status = OrderStatus.Unassigned;
+    order.timeline.push({
+      at,
+      actor: 'system',
+      title: 'Waiting for a supplier',
+      detail: (holder?.name ?? 'Its supplier') + ' is off duty — it goes to the first supplier on duty',
+      tone: null,
+    });
+    return false;
+  }
+
+  /**
+   * An order put back to wait by `restartOrRelease`, handed to whoever
+   * is on duty now — or left waiting, with the admins told, when nobody
+   * is.
+   */
+  async routeWaiting(order: OrderDocument): Promise<OrderDocument> {
+    const supplier = await this.suppliers.routeOrder(order.orderType);
+    /* Handed straight to somebody on duty: timed, unless it was untimed already. */
+    const claimed = supplier ? await this.claim(order._id, supplier, Boolean(order.untimed)) : null;
+    if (claimed) {
+      return claimed;
+    }
+    await this.notifications.raise(NotificationType.Unassigned, order._id);
+    this.realtime.orderChanged(order);
+    return order;
+  }
+
+  /* ---------------------------------- duty ---------------------------------- */
+
+  /**
+   * What a supplier still has to finish before they can go off duty:
+   * every order of theirs still waiting on its invoice — less the ones
+   * that are not waiting on *them*. A Direct Debit order whose bank
+   * details went back to the customer is the customer's move, and a
+   * flagged order is an admin's; when either comes back while the
+   * supplier is off duty, it goes to whoever is on (see
+   * `restartOrRelease`), so nothing is stranded.
+   */
+  private dutyBlockersQuery(supplierId: string): FilterQuery<OrderDocument> {
+    return {
+      supplier: new Types.ObjectId(supplierId),
+      invoiceStatus: InvoiceStatus.Pending,
+      status: { $in: [OrderStatus.AwaitingSupplier, OrderStatus.Overdue] },
+      'bankReview.status': { $ne: BankReviewStatus.ChangesRequested },
+      $or: [{ flag: null }, { 'flag.resolvedAt': { $ne: null } }],
+    };
+  }
+
+  /** The supplier app's duty switch, as it should read. */
+  async dutyFor(supplierId: string) {
+    const [supplier, toFinish] = await Promise.all([
+      this.suppliers.findById(supplierId),
+      this.orderModel.countDocuments(this.dutyBlockersQuery(supplierId)),
+    ]);
+    return {
+      onDuty: Boolean(supplier.onDuty),
+      onDutySince: supplier.onDutySince ? new Date(supplier.onDutySince).toISOString() : null,
+      toFinish,
+    };
+  }
+
+  /**
+   * On duty: new orders can be routed to them, and every order that has
+   * been waiting for somebody to come on is theirs at once, in Pending —
+   * with no seven-minute window, because it came in while nobody was on
+   * duty. Only an order received while on duty is timed.
+   *
+   * Off duty: refused while they still have an order to finish, so a
+   * window is never left running against somebody who has gone home.
+   * Nothing comes to them after it.
+   *
+   * The admins see either straight away.
+   */
+  async setDuty(supplierId: string, onDuty: boolean) {
+    const current = await this.suppliers.findById(supplierId);
+    const wasOnDuty = Boolean(current.onDuty);
+
+    if (onDuty) {
+      if (current.status !== SupplierStatus.Active) {
+        throw new ConflictException(
+          'Your account is not active, so orders cannot come to you. Ask your admin.',
+        );
+      }
+      const supplier = wasOnDuty ? current : await this.suppliers.setOnDuty(supplierId, true);
+      if (!wasOnDuty) {
+        this.realtime.supplierDuty(supplier);
+      }
+      const claimed = await this.claimWaiting(supplier);
+      return { ...(await this.dutyFor(supplierId)), claimed };
+    }
+
+    const toFinish = await this.orderModel.countDocuments(this.dutyBlockersQuery(supplierId));
+    if (toFinish > 0) {
+      throw new ConflictException(
+        'You still have ' +
+          toFinish +
+          (toFinish === 1 ? ' order' : ' orders') +
+          ' to finish. Upload ' +
+          (toFinish === 1 ? 'its invoice' : 'their invoices') +
+          ' before going off duty.',
+      );
+    }
+    if (wasOnDuty) {
+      this.realtime.supplierDuty(await this.suppliers.setOnDuty(supplierId, false));
+    }
+    return { ...(await this.dutyFor(supplierId)), claimed: 0 };
+  }
+
+  /** Every waiting order, oldest first, to this supplier. Returns how many they got. */
+  async claimWaiting(supplier: SupplierDocument): Promise<number> {
+    const waiting = await this.orderModel
+      .find({ status: OrderStatus.Unassigned, invoiceStatus: InvoiceStatus.Pending })
+      .sort({ placedAt: 1 })
+      .select('_id');
+    let claimed = 0;
+    for (const { _id } of waiting) {
+      if (await this.claim(_id, supplier, true)) {
+        claimed += 1;
+      }
+    }
+    if (claimed > 0) {
+      this.logger.log(claimed + ' waiting order(s) went to ' + supplier.name + '.');
+    }
+    return claimed;
+  }
+
+  /**
+   * One waiting order to one supplier. Conditional on it still waiting,
+   * so two suppliers coming on duty at the same moment cannot both be
+   * handed it.
+   *
+   * `untimed` when it came in while nobody was on duty: it lands in
+   * Pending with no window, and can never go overdue. Otherwise the
+   * seven minutes start now.
+   */
+  private async claim(
+    id: Types.ObjectId,
+    supplier: SupplierDocument,
+    untimed: boolean,
+  ): Promise<OrderDocument | null> {
+    const at = new Date();
+    const order = await this.orderModel.findOneAndUpdate(
+      { _id: id, status: OrderStatus.Unassigned },
+      {
+        $set: {
+          supplier: supplier._id,
+          status: OrderStatus.AwaitingSupplier,
+          assignedAt: at,
+          turnStartedAt: null,
+          dueAt: untimed ? null : new Date(at.getTime() + this.responseTimeoutMs),
+          untimed,
+        },
+        $push: {
+          timeline: {
+            at,
+            actor: 'system',
+            title: 'Assigned to ' + supplier.name,
+            detail: untimed
+              ? 'No time limit — it came in while nobody was on duty'
+              : 'Invoice window started',
+            tone: null,
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!order) {
+      return null;
+    }
+    await this.notifications.resolve(NotificationType.Unassigned, order._id);
+    this.realtime.orderAssigned(order);
+    await this.pushNewOrder(order);
+    return order;
   }
 
   /* --------------------------------- sweeps --------------------------------- */

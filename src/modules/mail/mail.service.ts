@@ -78,6 +78,16 @@ export interface NewOrderAlertEmail {
   total: string;
 }
 
+/** The code a customer types into the app to reset a forgotten password. */
+export interface PasswordResetEmail {
+  to: string;
+  customerName: string;
+  /** Six digits. */
+  code: string;
+  /** How long it lasts, in minutes. */
+  minutes: number;
+}
+
 /** Whether it went, and if not, a sentence an admin can act on. */
 export type MailResult = { sent: true } | { sent: false; reason: string };
 
@@ -313,6 +323,25 @@ export class MailService {
       rows,
       close: 'You can follow it under Orders in the admin portal.',
       what: 'New order alert for ' + mail.orderNumber,
+    });
+  }
+
+  /** The code for "Forgot password?", and how long it lasts. */
+  async sendPasswordResetCode(mail: PasswordResetEmail): Promise<MailResult> {
+    const greeting = mail.customerName ? 'Hi ' + mail.customerName.split(' ')[0] + ',' : 'Hello,';
+    return this.deliver({
+      to: mail.to,
+      noAddress: 'There is no email address on this account.',
+      subject: 'Your TaxMyMotor password reset code',
+      greeting,
+      lead:
+        'Use this code in the TaxMyMotor app to reset your password. It expires in ' +
+        mail.minutes +
+        ' minutes.',
+      rows: [['Your code', mail.code]],
+      close:
+        'If you did not ask to reset your password, you can ignore this email. Your password has not changed.',
+      what: 'Password reset code',
     });
   }
 

@@ -51,16 +51,48 @@ export class SuppliersService {
   }
 
   /**
-   * Where an order of this type actually lands.
+   * Where an order of this type actually lands: only ever with somebody
+   * who is active and on duty, because the seven-minute window starts
+   * the moment it lands.
    *
-   * Null when nobody holds the type, and also when the supplier who
-   * holds it is not active: exclusivity means there is no second
-   * supplier to fall through to, so the order arrives unassigned and
-   * the admin is told, rather than going to somebody who cannot
-   * process it.
+   * The supplier who holds the type comes first. When they are off duty
+   * the order goes to whoever else is on duty, the one who came on
+   * first — an order waiting for its own supplier to clock in is a
+   * customer waiting for no reason. Null when nobody is on duty: the
+   * order waits, unassigned and with no clock running, and goes to the
+   * first supplier who comes on duty (see OrdersService.claimWaiting).
    */
   async routeOrder(orderType: OrderType): Promise<SupplierDocument | null> {
-    return this.supplierModel.findOne({ orderTypes: orderType, status: SupplierStatus.Active });
+    const working = { status: SupplierStatus.Active, onDuty: true };
+    const holder = await this.supplierModel.findOne({ ...working, orderTypes: orderType });
+    if (holder) {
+      return holder;
+    }
+    return this.supplierModel.findOne(working).sort({ onDutySince: 1, _id: 1 });
+  }
+
+  /** Suppliers taking orders right now. */
+  async findOnDuty(): Promise<SupplierDocument[]> {
+    return this.supplierModel
+      .find({ status: SupplierStatus.Active, onDuty: true })
+      .sort({ onDutySince: 1 });
+  }
+
+  /**
+   * On or off duty, as the supplier switched it. Whether they are
+   * allowed to is OrdersService's call (`setDuty`), since it turns on
+   * what they still hold; this is only the write.
+   */
+  async setOnDuty(id: string | Types.ObjectId, onDuty: boolean): Promise<SupplierDocument> {
+    const supplier = await this.supplierModel.findByIdAndUpdate(
+      id,
+      { onDuty, onDutySince: onDuty ? new Date() : null },
+      { new: true },
+    );
+    if (!supplier) {
+      throw new NotFoundException('That supplier does not exist.');
+    }
+    return supplier;
   }
 
   /** Order types no active supplier currently covers. */
@@ -100,8 +132,15 @@ export class SuppliersService {
     return supplier;
   }
 
+  /**
+   * A supplier taken out of rotation is taken off duty with it, so
+   * making them active again does not quietly start routing to somebody
+   * who is not there: they go back on duty from the app themselves.
+   */
   async setStatus(id: string, status: SupplierStatus): Promise<SupplierDocument> {
-    const supplier = await this.supplierModel.findByIdAndUpdate(id, { status }, { new: true });
+    const patch =
+      status === SupplierStatus.Active ? { status } : { status, onDuty: false, onDutySince: null };
+    const supplier = await this.supplierModel.findByIdAndUpdate(id, patch, { new: true });
     if (!supplier) {
       throw new NotFoundException('That supplier does not exist.');
     }

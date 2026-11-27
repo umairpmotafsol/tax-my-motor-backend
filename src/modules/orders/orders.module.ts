@@ -16,6 +16,7 @@ import { OrdersService } from './orders.service';
 import { OrdersTasks } from './orders.tasks';
 import { Counter, CounterSchema } from './schemas/counter.schema';
 import { Order, OrderSchema } from './schemas/order.schema';
+import { SupplierDutyController } from './supplier-duty.controller';
 import { SupplierOrdersController } from './supplier-orders.controller';
 
 /**
@@ -40,7 +41,12 @@ import { SupplierOrdersController } from './supplier-orders.controller';
     PushModule,
     MailModule,
   ],
-  controllers: [OrdersController, SupplierOrdersController, AdminOrdersController],
+  controllers: [
+    OrdersController,
+    SupplierOrdersController,
+    SupplierDutyController,
+    AdminOrdersController,
+  ],
   providers: [OrdersService, BankReviewService, OrdersTasks],
   exports: [OrdersService, BankReviewService, MongooseModule],
 })

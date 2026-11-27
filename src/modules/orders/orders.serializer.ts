@@ -240,6 +240,8 @@ export function toSupplierOrder(order: OrderDocument) {
     turnStartedAt: iso(order.turnStartedAt),
     /** When this order goes overdue. The countdown reads from here. */
     dueAt: iso(order.dueAt),
+    /** Came in while nobody was on duty: no window, never overdue. */
+    untimed: Boolean(order.untimed),
     invoiceUploadedAt: iso(order.invoiceUploadedAt),
     /*
      * When the supplier's part ended: their own upload, or an admin
@@ -326,6 +328,7 @@ export function toAdminOrder(order: OrderDocument, suppliers?: SupplierLookup) {
     assignedAt: iso(order.assignedAt),
     turnStartedAt: iso(order.turnStartedAt),
     dueAt: iso(order.dueAt),
+    untimed: Boolean(order.untimed),
     invoiceUploadedAt: iso(order.invoiceUploadedAt),
     invoiceReadyAt: iso(order.invoiceReadyAt),
     invoiceSentAt: iso(order.invoiceSentAt),

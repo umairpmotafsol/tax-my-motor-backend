@@ -35,7 +35,7 @@ export const NOTIFICATION_META: Record<
     icon: 'whatsapp',
   },
   [NotificationType.Unassigned]: {
-    label: 'Order Could Not Be Assigned',
+    label: 'Waiting for a Supplier',
     tone: 'red',
     icon: 'alert',
   },

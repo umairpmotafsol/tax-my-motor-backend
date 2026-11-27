@@ -299,11 +299,28 @@ export class UsersService {
   }
 
   /**
+   * A customer changing their own password, from Settings. The current
+   * one has to be right: a phone left unlocked is not enough to take
+   * the account over.
+   */
+  async changePassword(id: string | Types.ObjectId, current: string, next: string): Promise<void> {
+    const user = await this.findByIdWithPassword(id);
+    if (!(await bcrypt.compare(current, user.passwordHash))) {
+      throw new BadRequestException('Your current password is not correct.');
+    }
+    if (await bcrypt.compare(next, user.passwordHash)) {
+      throw new BadRequestException('Your new password must be different from your current one.');
+    }
+    user.passwordHash = await this.hashPassword(next);
+    await user.save();
+  }
+
+  /**
    * Sets a password without knowing the old one: the admin generating a
-   * new one for a supplier's sign-in. This is the only way a password
-   * changes. Nobody can change their own; an admin issues every supplier
-   * password, and a supplier who loses theirs asks the admin for a new
-   * one.
+   * new one for a supplier's sign-in, or a customer who has proved who
+   * they are with an emailed code (AuthService.resetPassword). Suppliers
+   * cannot change their own; a supplier who loses theirs asks the admin
+   * for a new one.
    */
   async setPassword(id: string | Types.ObjectId, next: string): Promise<UserDocument> {
     const user = await this.findByIdWithPassword(id);

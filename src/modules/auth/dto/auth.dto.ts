@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -75,6 +76,46 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty({ message: 'Please enter your password.' })
   password!: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Please enter your current password.' })
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(8, { message: 'Your new password needs to be at least 8 characters.' })
+  @MaxLength(128)
+  newPassword!: string;
+
+  /** This device's session, kept signed in while every other one is signed out. */
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+}
+
+export class ForgotPasswordDto {
+  @IsEmail({}, { message: 'Please enter a valid email address.' })
+  @Transform(trim)
+  email!: string;
+}
+
+export class VerifyResetCodeDto {
+  @IsEmail({}, { message: 'Please enter a valid email address.' })
+  @Transform(trim)
+  email!: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code from the email.' })
+  @Transform(trim)
+  code!: string;
+}
+
+export class ResetPasswordDto extends VerifyResetCodeDto {
+  @IsString()
+  @MinLength(8, { message: 'Your new password needs to be at least 8 characters.' })
+  @MaxLength(128)
+  newPassword!: string;
 }
 
 export class RefreshDto {

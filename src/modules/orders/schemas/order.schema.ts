@@ -539,6 +539,17 @@ export class Order {
   @Prop({ type: Date, default: null, index: true })
   dueAt!: Date | null;
 
+  /**
+   * True for an order that came in while nobody was on duty. It goes to
+   * the first supplier who comes on, in their Pending list, but with no
+   * seven-minute window: the clock only runs on an order a supplier
+   * receives while they are on duty. It stays untimed for the rest of
+   * its life — sent back, returned from the customer or reassigned — so
+   * it can never go overdue.
+   */
+  @Prop({ type: Boolean, default: false })
+  untimed!: boolean;
+
   @Prop({ type: Date, default: null })
   invoiceUploadedAt!: Date | null;
 

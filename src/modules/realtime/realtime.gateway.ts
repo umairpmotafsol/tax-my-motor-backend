@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Role } from '../../common/enums/role.enum';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { OrderDocument } from '../orders/schemas/order.schema';
+import { SupplierDocument } from '../suppliers/schemas/supplier.schema';
 
 /**
  * Live order pushes.
@@ -126,6 +127,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.toSupplier(order, 'order:update', payload);
   }
 
+  /**
+   * A WhatsApp order's receipt is in, and it is an admin's to send. Its
+   * own event, beside the ordinary update, so an admin with the portal
+   * open is told on screen rather than only seeing the list change.
+   */
+  whatsappReady(order: OrderDocument): void {
+    this.toAdmins('order:whatsapp_ready', this.summary(order));
+  }
+
   /** The customer has to be told their details came back. */
   bankChangesRequested(order: OrderDocument): void {
     const payload = this.summary(order);
@@ -144,6 +154,21 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.toCustomer(order, 'bank:approved', payload);
     this.toSupplier(order, 'order:update', payload);
     this.toAdmins('order:update', payload);
+  }
+
+  /**
+   * A supplier went on or off duty. The admins see who is taking orders
+   * right now; the supplier's other phones flip their switch to match.
+   */
+  supplierDuty(supplier: SupplierDocument): void {
+    const payload = {
+      id: String(supplier._id),
+      name: supplier.name,
+      onDuty: Boolean(supplier.onDuty),
+      at: new Date().toISOString(),
+    };
+    this.toAdmins('supplier:duty', payload);
+    this.server?.to('supplier:' + String(supplier._id)).emit('supplier:duty', payload);
   }
 
   /* --------------------------------- internals ------------------------------- */

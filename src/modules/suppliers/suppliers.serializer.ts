@@ -10,6 +10,8 @@ export function toSupplier(supplier: SupplierDocument) {
     email: supplier.email,
     phone: supplier.phone,
     status: supplier.status,
+    onDuty: Boolean(supplier.onDuty),
+    onDutySince: supplier.onDutySince ? new Date(supplier.onDutySince).toISOString() : null,
     orderTypes: supplier.orderTypes,
     orderTypeLabels: supplier.orderTypes.map(type => ORDER_TYPE_LABEL[type]),
     since: formatOrderDate(new Date(supplier.since)),
@@ -23,6 +25,8 @@ export function toSupplierProfile(supplier: SupplierDocument) {
     id: String(supplier._id),
     name: supplier.name,
     status: supplier.status,
+    onDuty: Boolean(supplier.onDuty),
+    onDutySince: supplier.onDutySince ? new Date(supplier.onDutySince).toISOString() : null,
     orderTypes: supplier.orderTypes,
   };
 }
